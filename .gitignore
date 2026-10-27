@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+test-results/
+private-documents/
+*.zip
+*.exe
+*.msi
+*.xlsx
+*.xls
+*.hwp
+*.hwpx
+*.pdf
+!dist/fixtures/test.pdf

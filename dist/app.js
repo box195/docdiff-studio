@@ -40,7 +40,7 @@ function getOptions(){
   const pagesA=s==='pages'?parsePageRanges($('rangeA').value,a.pages.length):new Set(a.pages.map((_,i)=>i));
   const pagesB=s==='pages'?parsePageRanges($('rangeB').value,b.pages.length):new Set(b.pages.map((_,i)=>i));
   if(s==='region'&&(!state.regions[0]||!state.regions[1]))throw new Error('좌우 문서에서 각각 비교할 영역을 드래그해 지정해 주세요.');
-  return {mode:mode(),scope:s,ignoreSpace:$('ignoreSpace').checked,pagesA,pagesB,regionA:s==='region'?state.regions[0]:null,regionB:s==='region'?state.regions[1]:null};
+  return {mode:mode(),scope:s,ignoreSpace:$('ignoreSpace').checked,pagesA,pagesB,regionA:s==='region'?state.regions[0]:null,regionB:s==='region'?state.regions[1]:null,keyColumn:$('keyColumn').value};
 }
 
 async function ensureDocuments(){
@@ -53,14 +53,18 @@ async function ensureDocuments(){
   }
 }
 
+function backgroundCompare(a,b,options){
+ if(typeof Worker==='undefined')return Promise.resolve(contentDifferences(a,b,options));
+ return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js',import.meta.url),{type:'module'});const clean=d=>({type:d.type,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
+}
 async function compare(){
   if(state.busy)return;state.busy=true;$('compareBtn').disabled=true;
   try{
     await ensureDocuments();
     const opts=getOptions();state.lastOptions=opts;
     progress(.82,'텍스트와 구조 비교');
-    let diffs=opts.mode==='visual'?[]:contentDifferences(state.docs[0],state.docs[1],opts);
-    const visualRequested=opts.mode==='visual'||(opts.mode==='precision'&&$('visualExtra').checked&&state.docs.every(d=>d.type==='pdf'));
+    const bothWorkbooks=state.docs.every(d=>d.type==='xlsx');let diffs=opts.mode==='visual'&&!bothWorkbooks?[]:await backgroundCompare(state.docs[0],state.docs[1],{...opts,mode:opts.mode==='visual'?'precision':opts.mode});
+    const visualRequested=!bothWorkbooks&&(opts.mode==='visual'||(opts.mode==='precision'&&$('visualExtra').checked&&state.docs.every(d=>d.type==='pdf')));
     if(visualRequested){
       const visual=await visualDifferences(state.docs[0],state.docs[1],opts,(p,m)=>progress(.82+p*.17,m));
       if(opts.mode==='precision'){
@@ -141,7 +145,7 @@ for(let i=0;i<2;i++){
 
 function setScopeVisibility(){const s=scope();$('rangeInputs').classList.toggle('hidden',s!=='pages');$('scopeHint').classList.toggle('hidden',s!=='region');}
 document.querySelectorAll('input[name="scope"]').forEach(r=>r.addEventListener('change',setScopeVisibility));
-const hints={fast:'글자·숫자 중심 비교. 서식·화면 차이는 검사하지 않습니다.',precision:'내용과 가용 서식을 비교합니다. PDF끼리는 화면도 보조 검사합니다.',visual:'페이지 화면을 이미지로 검사합니다. 서로 다른 형식은 배치 차이 때문에 확인 필요가 늘어날 수 있습니다.'};
+const hints={fast:'글자·숫자 중심 비교. 서식·화면 차이는 검사하지 않습니다.',precision:'내용과 가용 서식을 비교합니다. PDF끼리는 화면도 보조 검사합니다.',visual:'PDF 등은 화면 차이를 보조 검사합니다. Excel끼리는 행 정렬 후 내용·가용 서식을 검사해 삽입에 따른 위치 오탐을 줄입니다.'};
 document.querySelectorAll('input[name="mode"]').forEach(r=>r.addEventListener('change',()=>{$('modeHint').textContent=hints[mode()];}));
 
 const filterDiffs=()=>state.diffs.map((d,i)=>({...d,index:i})).filter(d=>state.filter==='all'||d.type===state.filter).filter(d=>$('showReview').checked||d.type!=='review');
@@ -176,7 +180,7 @@ document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{
 $('showReview').addEventListener('change',renderResults);
 
 $('exportBtn').addEventListener('click',()=>{
-  const output={app:'문서 비교실 v0.1',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
+  const output={app:'문서 비교실 v0.2',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
   const blob=new Blob([JSON.stringify(output,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`document-diff-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 
