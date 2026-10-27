@@ -32,7 +32,7 @@
       <div class="scope-choice"><label><input type="radio" name="scope" value="all" checked>전체</label><label><input type="radio" name="scope" value="pages">페이지 범위</label><label><input type="radio" name="scope" value="region">직접 영역 지정</label></div>
       <div id="rangeInputs" class="range-inputs hidden"><label>원본 페이지<input id="rangeA" placeholder="예: 1-3,5" spellcheck="false"></label><label>수정본 페이지<input id="rangeB" placeholder="예: 1-3,5" spellcheck="false"></label></div>
       <p id="scopeHint" class="hint hidden">두 미리보기에서 마우스로 비교할 영역을 지정하세요. 영역은 해당 페이지에만 적용됩니다.</p>
-      <div class="option-row"><label class="check"><input type="checkbox" id="ignoreSpace">공백 차이 무시</label></div>
+      <label class="hint" for="keyColumn">엑셀 행 식별자</label><select id="keyColumn" aria-label="엑셀 행 식별자"><option value="auto">자동 탐색 · 식별자와 행 내용</option><option value="none">식별자 없이 행 내용으로 정렬</option><option value="1">A열</option><option value="2">B열</option><option value="3">C열</option><option value="4">D열</option><option value="5">E열</option><option value="6">F열</option><option value="7">G열</option><option value="8">H열</option><option value="9">I열</option></select><p class="hint">중간에 행이 추가돼도 아래 행은 내용에 맞춰 대응합니다. 중복 식별자는 확인이 필요합니다.</p><div class="option-row"><label class="check"><input type="checkbox" id="ignoreSpace">공백 차이 무시</label></div>
       <div class="option-row"><label class="check"><input type="checkbox" id="visualExtra" checked>정밀 비교 시 화면 보조 검사</label></div>
       <div class="option-row"><label class="check"><input type="checkbox" id="showReview" checked>불확실 항목도 표시</label></div>
 
@@ -57,7 +57,7 @@
     </main>
   </div>
 
-  <dialog id="helpDialog"><div class="dialog-head"><h2>문서 비교실 안내</h2><button id="closeHelp" aria-label="닫기">×</button></div><p>PDF는 실제 페이지를 렌더링하고, XLSX와 HWPX는 추출한 셀·문단·표를 구조 기반으로 보여줍니다. 화면에 표시되는 XLSX/HWPX의 위치는 원본 프로그램의 인쇄 좌표가 아닙니다.</p><ul><li><b>빠른:</b> 텍스트와 숫자 중심</li><li><b>정밀:</b> 텍스트와 가능한 서식, PDF끼리는 시각 비교</li><li><b>화면:</b> 렌더링 화면의 차이. 서로 다른 형식은 배치 차이가 다수 발생할 수 있음</li><li><b>영역:</b> 두 문서에서 각각 드래그하여 선택 후 비교 시작</li><li><b>결과:</b> 변화 항목 클릭 또는 이전·다음으로 해당 페이지 이동</li></ul><p>스캔된 PDF, 암호 문서, 구형 HWP는 일부 또는 전체 비교가 불가능합니다. 파일은 원격 서버에 업로드되지 않습니다.</p></dialog>
+  <dialog id="helpDialog"><div class="dialog-head"><h2>문서 비교실 안내</h2><button id="closeHelp" aria-label="닫기">×</button></div><p>PDF는 실제 페이지를 렌더링하고, XLSX와 HWPX는 추출한 셀·문단·표를 구조 기반으로 보여줍니다. 화면에 표시되는 XLSX/HWPX의 위치는 원본 프로그램의 인쇄 좌표가 아닙니다.</p><ul><li><b>빠른:</b> 텍스트와 숫자 중심</li><li><b>정밀:</b> 텍스트와 가능한 서식, PDF끼리는 시각 비교</li><li><b>화면:</b> PDF 등은 렌더링 화면을 보조 검사하며 Excel끼리는 행 정렬 후 내용·가용 서식을 검사</li><li><b>영역:</b> 두 문서에서 각각 드래그하여 선택 후 비교 시작</li><li><b>결과:</b> 변화 항목 클릭 또는 이전·다음으로 해당 페이지 이동</li></ul><p>스캔된 PDF, 암호 문서, 구형 HWP는 일부 또는 전체 비교가 불가능합니다. 파일은 원격 서버에 업로드되지 않습니다.</p></dialog>
   <script src="./vendor/jszip.min.js"></script>
   <script type="module" src="./app.js"></script>
 </body>

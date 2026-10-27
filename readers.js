@@ -72,10 +72,14 @@ async function readPdf(file,onProgress){
 function parseExcelStyles(styleXml){
   if(!styleXml)return[];
   const root=xml(styleXml),fontRoot=descendants(root,'fonts')[0],borderRoot=descendants(root,'borders')[0],fillRoot=descendants(root,'fills')[0],cellXfs=descendants(root,'cellXfs')[0];
-  const fonts=children(fontRoot,'font').map(f=>({font:attr(firstChild(f,'name'),'val',''),size:Number(attr(firstChild(f,'sz'),'val',11)),bold:!!firstChild(f,'b'),italic:!!firstChild(f,'i'),color:attr(firstChild(f,'color'),'rgb','')}));
+  const color=node=>node?(attr(node,'rgb')||(node.hasAttribute('theme')?'theme:'+attr(node,'theme')+':'+attr(node,'tint','0'):'')||(node.hasAttribute('indexed')?'indexed:'+attr(node,'indexed'):'')||'auto'):'';
+  const enabled=node=>!!node&&!['0','false'].includes(attr(node,'val','1'));
+  const fonts=children(fontRoot,'font').map(f=>({font:attr(firstChild(f,'name'),'val',''),size:Number(attr(firstChild(f,'sz'),'val',11)),bold:enabled(firstChild(f,'b')),italic:enabled(firstChild(f,'i')),underline:firstChild(f,'u')?attr(firstChild(f,'u'),'val','single'):'none',strike:enabled(firstChild(f,'strike')),color:color(firstChild(f,'color'))}));
   const borders=children(borderRoot,'border').map(b=>Object.fromEntries(['left','right','top','bottom'].map(side=>[side,attr(firstChild(b,side),'style','none')])));
-  const fills=children(fillRoot,'fill').map(f=>attr(firstChild(firstChild(f,'patternFill'),'fgColor'),'rgb',''));
-  return children(cellXfs,'xf').map(x=>({...fonts[Number(attr(x,'fontId','0'))],border:borders[Number(attr(x,'borderId','0'))]||{},fill:fills[Number(attr(x,'fillId','0'))]||'',numFmtId:attr(x,'numFmtId','0')}));
+  const borderColors=children(borderRoot,'border').map(b=>Object.fromEntries(['left','right','top','bottom'].map(side=>[side,color(firstChild(firstChild(b,side),'color'))])));
+  const fills=children(fillRoot,'fill').map(f=>color(firstChild(firstChild(f,'patternFill'),'fgColor')));
+  const numberFormats=new Map(descendants(root,'numFmt').map(n=>[attr(n,'numFmtId'),attr(n,'formatCode')]));
+  return children(cellXfs,'xf').map(x=>({...fonts[Number(attr(x,'fontId','0'))],border:borders[Number(attr(x,'borderId','0'))]||{},borderColor:borderColors[Number(attr(x,'borderId','0'))]||{},alignment:Object.fromEntries(Array.from(firstChild(x,'alignment')?.attributes||[]).map(a=>[a.name,a.value])),numberFormat:numberFormats.get(attr(x,'numFmtId','0'))||'',fill:fills[Number(attr(x,'fillId','0'))]||'',numFmtId:attr(x,'numFmtId','0')}));
 }
 
 async function readXlsx(file,zip,onProgress){
@@ -92,18 +96,22 @@ async function readXlsx(file,zip,onProgress){
     const path=normalizePath('xl/workbook.xml',target),entry=zip.file(path);
     if(!entry){doc.warnings.push(`${name} 시트 내용을 읽지 못했습니다.`);continue;}
     const sheetXml=xml(await entry.async('string'));
-    const cells=descendants(sheetXml,'c'),rows=new Map(),sheetRecords=[];
+    const cells=descendants(sheetXml,'c'),rows=new Map(),sheetRecords=[],declaredRows=descendants(sheetXml,'row'),rowNodes=new Map(declaredRows.map(r=>[Number(attr(r,'r')),r]));
     for(const c of cells){
       const addr=attr(c,'r'),m=addr.match(/^([A-Z]+)(\d+)$/i);if(!m)continue;
       const col=colNumber(m[1]),row=Number(m[2]);if(row>100000||col>16384)continue;
       const t=attr(c,'t'),v=firstChild(c,'v')?.textContent||'',formula=firstChild(c,'f')?.textContent||'';
       let value=t==='s'?shared[Number(v)]??v:t==='inlineStr'?exactText(c):t==='b'?(v==='1'?'TRUE':'FALSE'):v;
       if(formula&&!value)value=`=${formula}`;
-      const style=styles[Number(attr(c,'s','0'))]||null;
+      const baseStyle=styles[Number(attr(c,'s','0'))]||null;const rowNode=rowNodes.get(row);const style=baseStyle?{...baseStyle,rowHeight:attr(rowNode,'ht',null)}:null;
       if(!String(value).trim()&&!formula&&!style)continue;
       const r={id:`xlsx-${name}-${addr}`,role:'cell',text:String(value),label:`${name}!${addr}`,page:-1,rect:null,style,meta:{sheet:name,row,col,address:addr,formula,raw:v,type:t}};
       sheetRecords.push(r);if(!rows.has(row))rows.set(row,[]);rows.get(row).push(r);
     }
+    const declaredLast=declaredRows.reduce((m,r)=>{let n=Number(attr(r,'r','0'));return n<=100000?Math.max(m,n):m},0);
+    let lastRow=declaredLast;for(const r of sheetRecords)lastRow=Math.max(lastRow,r.meta.row);
+    if(lastRow>8000)throw new Error('시트 표시 페이지가 200장을 초과합니다. 비교 범위를 줄여 주세요.');
+    for(let row=1;row<=lastRow;row++)if(!rows.has(row)){const r={id:`xlsx-${name}-blank-${row}`,role:'row',text:'',label:`${name}!${row}행 (빈 행)`,page:-1,rect:null,style:null,meta:{sheet:name,row,col:1,address:`A${row}`,formula:'',emptyRow:true}};rows.set(row,[r]);sheetRecords.push(r)}
     for(const rs of rows.values()){
       const key=rs.find(r=>r.meta.col===1)?.text||'';
       for(const r of rs)r.meta.rowKey=key;
@@ -128,7 +136,7 @@ async function readXlsx(file,zip,onProgress){
       pg.grid={startRow,endRow,startCol,endCol,x:44,y:110,w,h,cols:endCol-startCol+1,rows:endRow-startRow+1};
       doc.pages.push(pg);
     }
-    doc.sheets.push({name,rows:[...rows.keys()].length,cells:sheetRecords.length});doc.records.push(...sheetRecords);
+    const printLayout={};for(const tag of ['pageMargins','pageSetup','printOptions']){const node=descendants(sheetXml,tag)[0];if(node)printLayout[tag]=Object.fromEntries(Array.from(node.attributes).map(a=>[a.name,a.value]))}doc.sheets.push({name,rows:[...rows.keys()].length,cells:sheetRecords.length,printLayout});doc.records.push(...sheetRecords);
     onProgress((si+1)/names.length*.85,`${name} 시트 분석`);
     await new Promise(resolve=>setTimeout(resolve,0));
   }
@@ -168,7 +176,7 @@ async function readHwpx(file,zip,onProgress){
         tableRows.forEach((tr,row)=>{const cells=children(tr,'tc');const vals=cells.map(tc=>exactText(tc).trim().replace(/\s+/g,' '));addTableRow(vals,si,row);});
         return;
       }
-      if(node.localName==='p'&&!inTable){add(exactText(node),'paragraph',`본문 ${si+1}`);return;}
+      if(node.localName==='p'&&!inTable){const tables=descendants(node,'tbl');if(tables.length){const ownText=descendants(node,'t').filter(t=>{let p=t.parentNode;while(p&&p!==node){if(p.localName==='tbl')return false;p=p.parentNode}return true}).map(t=>t.textContent||'').join('');add(ownText,'paragraph',`본문 ${si+1}`);for(const table of tables.filter(t=>{let p=t.parentNode;while(p&&p!==node){if(p.localName==='tbl')return false;p=p.parentNode}return true}))walk(table,true)}else add(exactText(node),'paragraph',`본문 ${si+1}`);return;}
       for(const ch of Array.from(node.children||[]))walk(ch,inTable);
     };
     walk(root.documentElement);onProgress((si+1)/sectionFiles.length*.85,`한글 문서 ${si+1}/${sectionFiles.length}구역`);
