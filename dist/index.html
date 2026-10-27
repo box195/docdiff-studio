@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>문서 비교실 — Excel · HWPX · PDF</title>
+  <meta name="description" content="파일을 외부에 업로드하지 않고 Excel, HWPX, PDF를 비교하는 웹앱" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">≋</span><div><strong>문서 비교실</strong><small>DOC DIFF STUDIO</small></div></div>
+    <div class="top-actions"><span class="privacy"><span class="status-dot"></span>파일은 이 브라우저에서만 처리</span><button id="helpBtn" class="iconbtn" aria-label="도움말">?</button></div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="section-heading"><span>01</span><h2>비교할 문서</h2></div>
+      <label class="dropzone" id="dropA" for="fileA"><span class="file-icon">A</span><strong id="fileNameA">원본 파일 선택</strong><small id="fileMetaA">클릭하거나 여기에 끌어놓기</small><input id="fileA" type="file" accept=".pdf,.xlsx,.hwpx,.hwp" hidden></label>
+      <div class="swap-wrap"><button id="swapBtn" class="swap-btn" aria-label="원본과 수정본 바꾸기">↕ <span>파일 순서 바꾸기</span></button></div>
+      <label class="dropzone" id="dropB" for="fileB"><span class="file-icon new">B</span><strong id="fileNameB">수정 파일 선택</strong><small id="fileMetaB">PDF · XLSX · HWPX 지원</small><input id="fileB" type="file" accept=".pdf,.xlsx,.hwpx,.hwp" hidden></label>
+
+      <div class="section-heading spaced"><span>02</span><h2>비교 방식</h2></div>
+      <div class="segmented" role="radiogroup" aria-label="비교 모드">
+        <label><input type="radio" name="mode" value="fast"><span>빠른</span></label>
+        <label><input type="radio" name="mode" value="precision" checked><span>정밀</span></label>
+        <label><input type="radio" name="mode" value="visual"><span>화면</span></label>
+      </div>
+      <p id="modeHint" class="hint">내용과 구조·가용 서식을 비교하고, PDF끼리는 화면 차이도 검사합니다.</p>
+
+      <div class="section-heading spaced"><span>03</span><h2>비교 범위</h2></div>
+      <div class="scope-choice"><label><input type="radio" name="scope" value="all" checked>전체</label><label><input type="radio" name="scope" value="pages">페이지 범위</label><label><input type="radio" name="scope" value="region">직접 영역 지정</label></div>
+      <div id="rangeInputs" class="range-inputs hidden"><label>원본 페이지<input id="rangeA" placeholder="예: 1-3,5" spellcheck="false"></label><label>수정본 페이지<input id="rangeB" placeholder="예: 1-3,5" spellcheck="false"></label></div>
+      <p id="scopeHint" class="hint hidden">두 미리보기에서 마우스로 비교할 영역을 지정하세요. 영역은 해당 페이지에만 적용됩니다.</p>
+      <div class="option-row"><label class="check"><input type="checkbox" id="ignoreSpace">공백 차이 무시</label></div>
+      <div class="option-row"><label class="check"><input type="checkbox" id="visualExtra" checked>정밀 비교 시 화면 보조 검사</label></div>
+      <div class="option-row"><label class="check"><input type="checkbox" id="showReview" checked>불확실 항목도 표시</label></div>
+
+      <button id="compareBtn" class="primary-btn"><span>⇄</span> 비교 시작</button>
+      <button id="demoBtn" class="secondary-btn">예제 문서로 체험</button>
+      <div id="progressBox" class="progress-box hidden"><div class="progress-heading"><span id="progressText">분석 준비 중</span><span id="progressPercent">0%</span></div><div class="progress-track"><div id="progressBar"></div></div></div>
+      <p id="status" class="status-text" role="status">파일을 선택하거나 예제로 시작하세요.</p>
+      <div class="side-footer"><strong>처리 범위 안내</strong><p>PDF는 실제 페이지 미리보기, XLSX·HWPX는 구조 기반 미리보기입니다. 구형 HWP는 HWPX/PDF 변환이 필요합니다. 스캔 PDF의 OCR은 이번 버전에서 지원하지 않습니다.</p></div>
+    </aside>
+
+    <main class="main">
+      <div class="workspace-top"><div><span class="eyebrow">COMPARE WORKSPACE</span><h1>문서 변경 사항 검토</h1><p>좌우 페이지에서 달라진 부분을 확인하고 결과를 따라 이동하세요.</p></div><div class="workspace-buttons"><button id="exportBtn" class="outline-btn" disabled>↓ 결과 내려받기</button><button id="clearBtn" class="outline-btn">초기화</button></div></div>
+      <div class="navigation"><div class="nav-status"><span class="nav-icon">◎</span><span id="changeCounter">차이점 없음</span><span id="summaryChips" class="summary-chips"></span></div><div class="nav-actions"><button id="prevBtn" disabled>← 이전</button><button id="nextBtn" disabled>다음 →</button></div></div>
+
+      <div class="panes">
+        <section class="pane" aria-label="원본 문서 미리보기"><div class="pane-header"><div><span class="pane-tag original">A</span><strong id="paneTitleA">원본 문서</strong></div><div class="page-control"><button id="pagePrevA" aria-label="원본 이전 페이지">‹</button><span id="pageInfoA">— / —</span><button id="pageNextA" aria-label="원본 다음 페이지">›</button></div></div><div class="page-viewport" id="viewportA"><div class="page-shell" id="shellA"><canvas id="canvasA"></canvas><div class="annotations" id="overlayA"></div><div class="selection hidden" id="selectionA"></div></div><div class="empty-page" id="emptyA"><span>▤</span><strong>원본 미리보기</strong><p>문서를 선택하면 페이지가 표시됩니다.</p></div></div></section>
+        <section class="pane" aria-label="수정 문서 미리보기"><div class="pane-header"><div><span class="pane-tag modified">B</span><strong id="paneTitleB">수정 문서</strong></div><div class="page-control"><button id="pagePrevB" aria-label="수정본 이전 페이지">‹</button><span id="pageInfoB">— / —</span><button id="pageNextB" aria-label="수정본 다음 페이지">›</button></div></div><div class="page-viewport" id="viewportB"><div class="page-shell" id="shellB"><canvas id="canvasB"></canvas><div class="annotations" id="overlayB"></div><div class="selection hidden" id="selectionB"></div></div><div class="empty-page" id="emptyB"><span>▤</span><strong>수정본 미리보기</strong><p>비교 결과가 이곳에 표시됩니다.</p></div></div></section>
+      </div>
+
+      <section class="results"><div class="results-head"><div><span class="eyebrow">DIFFERENCE INDEX</span><h2>변경 내역 <span id="resultCount">0</span></h2></div><div class="filters"><button class="filter active" data-filter="all">전체</button><button class="filter" data-filter="changed">수정</button><button class="filter" data-filter="added">추가</button><button class="filter" data-filter="removed">삭제</button><button class="filter" data-filter="review">확인 필요</button></div></div><div id="resultsList" class="results-list"><div class="result-empty">비교를 실행하면 변경 위치와 전후 내용이 여기에 표시됩니다.</div></div></section>
+      <footer class="footnote">이 웹앱은 검사할 수 없는 속성을 ‘동일’로 판정하지 않습니다. 실제 원본 프로그램과의 인쇄 배치 차이는 별도로 확인하세요.</footer>
+    </main>
+  </div>
+
+  <dialog id="helpDialog"><div class="dialog-head"><h2>문서 비교실 안내</h2><button id="closeHelp" aria-label="닫기">×</button></div><p>PDF는 실제 페이지를 렌더링하고, XLSX와 HWPX는 추출한 셀·문단·표를 구조 기반으로 보여줍니다. 화면에 표시되는 XLSX/HWPX의 위치는 원본 프로그램의 인쇄 좌표가 아닙니다.</p><ul><li><b>빠른:</b> 텍스트와 숫자 중심</li><li><b>정밀:</b> 텍스트와 가능한 서식, PDF끼리는 시각 비교</li><li><b>화면:</b> 렌더링 화면의 차이. 서로 다른 형식은 배치 차이가 다수 발생할 수 있음</li><li><b>영역:</b> 두 문서에서 각각 드래그하여 선택 후 비교 시작</li><li><b>결과:</b> 변화 항목 클릭 또는 이전·다음으로 해당 페이지 이동</li></ul><p>스캔된 PDF, 암호 문서, 구형 HWP는 일부 또는 전체 비교가 불가능합니다. 파일은 원격 서버에 업로드되지 않습니다.</p></dialog>
+  <script src="./vendor/jszip.min.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
