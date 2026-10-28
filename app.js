@@ -1,6 +1,7 @@
-import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261028-6';
-import {contentDifferences,visualDifferences,parsePageRanges,summarize,unexplainedVisualDifferences} from './diff.js?v=20261028-6';
-import {groupChanges,navigationDirection,revealInList} from './review-navigation.js?v=20261028-6';
+import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261028-7';
+import {contentDifferences,visualDifferences,parsePageRanges,summarize,unexplainedVisualDifferences} from './diff.js?v=20261028-7';
+import {groupChanges,navigationDirection,revealInList} from './review-navigation.js?v=20261028-7';
+import {changePresentation,isFormatChange} from './change-presentation.js?v=20261028-7';
 
 const $=id=>document.getElementById(id);
 const state={files:[null,null],docs:[null,null],pages:[0,0],regions:[null,null],rawDiffs:[],diffs:[],active:-1,filter:'all',busy:false,renderSeq:[0,0],selectionSeq:0,lastOptions:null};
@@ -58,7 +59,7 @@ async function ensureDocuments(){
 
 function backgroundCompare(a,b,options){
  if(typeof Worker==='undefined')return Promise.resolve(contentDifferences(a,b,options));
- return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261028-6',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
+ return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261028-7',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
 }
 async function compare(){
   if(state.busy)return;state.busy=true;$('compareBtn').disabled=true;
@@ -112,10 +113,13 @@ async function showPage(i,index){
 function pageRectStyle(rect,pg){return {left:`${100*rect.x/pg.width}%`,top:`${100*rect.y/pg.height}%`,width:`${100*rect.w/pg.width}%`,height:`${100*rect.h/pg.height}%`};}
 function repaintOverlays(i){
   const side=sideLetter(i),doc=state.docs[i],overlay=$(`overlay${side}`);overlay.replaceChildren();if(!doc)return;
-  const pg=doc.pages[state.pages[i]];
-  state.diffs.forEach((d,index)=>{const r=i===0?d.left:d.right;if(!r?.rect||r.page!==state.pages[i])return;
-    const el=document.createElement('div');el.className=`annotation ${index===state.active?'active':''} ${d.type==='added'?'added':''} ${d.type==='review'?'review':''}`;
-    Object.assign(el.style,pageRectStyle(r.rect,pg));el.title=`차이 #${index+1}: ${d.detail}`;overlay.appendChild(el);
+  const pg=doc.pages[state.pages[i]],visible=new Set(filterDiffs().map(d=>d.index));
+  state.diffs.forEach((d,index)=>{const r=i===0?d.left:d.right;if(!visible.has(index)||!r?.rect||r.page!==state.pages[i])return;
+    if($('focusOnly').checked&&index!==state.active)return;
+    const presentation=changePresentation(d),mark=i===0?presentation.left:presentation.right;
+    const el=document.createElement('div');el.className=`annotation mark-${mark.tone} ${index===state.active?'active':''}`;
+    Object.assign(el.style,pageRectStyle(r.rect,pg));el.title=`#${index+1} ${mark.label}: ${d.detail}`;
+    if(index===state.active){const tag=document.createElement('span');tag.className='annotation-tag'+(r.rect.y<30?' tag-inside':'');tag.textContent=`#${index+1} ${mark.label}`;el.appendChild(tag);}overlay.appendChild(el);
   });
 }
 
@@ -150,20 +154,24 @@ document.querySelectorAll('input[name="scope"]').forEach(r=>r.addEventListener('
 const hints={fast:'글자·숫자 중심 비교. 서식·화면 차이는 검사하지 않습니다.',precision:'셀 배경색·음영·테두리·글자·문단 서식을 비교하고 페이지 화면도 보조 검사합니다. 한글 댓글은 제외합니다.',visual:'PDF·한글 페이지의 화면 차이를 검사합니다. 한글과 PDF 등 서로 다른 렌더러의 차이는 확인 필요로 표시합니다. Excel끼리는 행 정렬 후 내용·가용 서식을 검사합니다.'};
 document.querySelectorAll('input[name="mode"]').forEach(r=>r.addEventListener('change',()=>{$('modeHint').textContent=hints[mode()];}));
 
-const filterDiffs=()=>state.diffs.map((d,i)=>({...d,index:i})).filter(d=>state.filter==='all'||d.type===state.filter).filter(d=>$('showReview').checked||d.type!=='review');
+const filterDiffs=()=>state.diffs.map((d,i)=>({...d,index:i})).filter(d=>state.filter==='all'||(state.filter==='format'?isFormatChange(d):d.type===state.filter)).filter(d=>$('showReview').checked||d.type!=='review');
+function renderActiveChange(){
+  const d=state.diffs[state.active],panel=$('activeChangePanel');panel.classList.toggle('hidden',!d);if(!d){for(const side of ['A','B']){$('sideState'+side).textContent=side==='A'?'이전 내용 · 삭제된 부분':'새 내용 · 추가된 부분';$('sideState'+side).className='side-state';}return;}
+  const p=changePresentation(d);for(const side of ['A','B']){const mark=side==='A'?p.left:p.right;$('sideState'+side).textContent=mark.label;$('sideState'+side).className='side-state tone-'+mark.tone;}panel.className=`active-change kind-${p.kind}`;
+  panel.innerHTML=`<div class="active-change-title"><b>#${state.active+1} ${escapeHtml(p.label)}</b><span>${escapeHtml(p.explanation)}</span></div><div class="before-after"><div><small>왼쪽 A · ${escapeHtml(p.left.label)}</small><strong>${escapeHtml(ftext(p.before,140))}</strong></div><div><small>오른쪽 B · ${escapeHtml(p.right.label)}</small><strong>${escapeHtml(ftext(p.after,140))}</strong></div></div>`;
+}
 function renderResults(){
   const visible=filterDiffs(),counts=summarize(state.diffs);
   $('resultCount').textContent=visible.length;$('changeCounter').textContent=state.diffs.length?`전체 ${state.diffs.length}건 · 선택 ${Math.max(0,visible.findIndex(d=>d.index===state.active)+1)}/${visible.length}${state.rawDiffs.length>state.diffs.length?` · 세부 ${state.rawDiffs.length}건`:''}`:'차이점 없음';
-  $('summaryChips').innerHTML=`<span>수정 ${counts.changed||0}</span><span>추가 ${counts.added||0}</span><span>삭제 ${counts.removed||0}</span><span>확인 ${counts.review||0}</span>`;
+  $('summaryChips').innerHTML=`<span>수정 ${counts.changed||0}</span><span>추가 ${counts.added||0}</span><span>삭제 ${counts.removed||0}</span><span>확인 ${counts.review||0}</span>`;renderActiveChange();
   $('prevBtn').disabled=$('nextBtn').disabled=!visible.length;$('exportBtn').disabled=!state.diffs.length;
   const list=$('resultsList');list.replaceChildren();
-  if(!visible.length){list.innerHTML='<div class="result-empty">표시할 차이점이 없습니다.</div>';return;}
+  if(!visible.length){list.innerHTML='<div class="result-empty">표시할 차이점이 없습니다.</div>';repaintOverlays(0);repaintOverlays(1);return;}
   for(const d of visible){
-    const card=document.createElement('div');card.className=`result ${d.index===state.active?'current':''}`;card.tabIndex=0;card.setAttribute('role','button');
-    const symbol={changed:'≠',added:'+',removed:'−',review:'?'}[d.type],labels={changed:'수정',added:'추가',removed:'삭제',review:'확인 필요'};
+    const p=changePresentation(d),card=document.createElement('div');card.className=`result kind-${p.kind} ${d.index===state.active?'current':''}`;card.tabIndex=0;card.setAttribute('role','button');
     const location=(r,i)=>r?.page!=null?`${i?'수정본':'원본'} ${state.docs[i]?.type==='hwpx'&&state.docs[i]?.preview!=='hwp-layout'?`추출 ${r.page+1}구간 · ${r.label||''}`:`${r.page+1}쪽`}`:`${i?'수정본':'원본'} 없음`;
     const a=location(d.left,0),b=location(d.right,1);
-    card.innerHTML=`<span class="result-icon ${d.type}">${symbol}</span><div class="result-content"><strong>#${d.index+1} ${labels[d.type]} · ${escapeHtml(d.detail)}</strong><p>${escapeHtml(ftext(d.oldText,110))} <b>→</b> ${escapeHtml(ftext(d.newText,110))}</p><span class="result-meta">${a} / ${b} · ${escapeHtml(d.category)}${d.confidence!=='certain'?' · 추정':''}</span></div>`;
+    card.innerHTML=`<span class="result-icon ${p.kind}">${p.symbol}</span><div class="result-content"><strong>#${d.index+1} <span class="change-badge">${escapeHtml(p.label)}</span>${d.members?` · ${d.members.length}개 셀`:''}</strong><p class="result-description">${escapeHtml(d.detail)}</p><div class="before-after"><div><small>A 기존</small><span>${escapeHtml(ftext(p.before,110))}</span></div><div><small>B 변경</small><span>${escapeHtml(ftext(p.after,110))}</span></div></div><span class="result-meta">${a} / ${b}${d.confidence!=='certain'?' · 직접 확인 필요':''}</span></div>`;
     if(d.members){const details=document.createElement('details');details.className='cell-details';details.innerHTML=`<summary>셀별 상세 ${d.members.length}개</summary>${d.members.map(m=>{const r=m.right||m.left;return `<p><b>${escapeHtml(r.meta.sheet||'표')} · ${r.meta.row||r.meta.tableRow}행 ${r.meta.col}열</b><br>${escapeHtml(m.oldText)} → ${escapeHtml(m.newText)}<br>${escapeHtml(m.detail)}</p>`;}).join('')}`;details.addEventListener('click',e=>e.stopPropagation());card.querySelector('.result-content').appendChild(details);}
     card.addEventListener('click',()=>selectDiff(d.index));card.addEventListener('keydown',e=>{if(e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();selectDiff(d.index);}});list.appendChild(card);
   }
@@ -185,12 +193,13 @@ function selectDiff(index){
 }
 function step(direction){if(state.busy)return;const visible=filterDiffs().map(d=>d.index);if(!visible.length)return false;const i=visible.indexOf(state.active);const next=visible[i<0?(direction>0?0:visible.length-1):(i+direction+visible.length)%visible.length];selectDiff(next);return true;}
 $('prevBtn').addEventListener('click',()=>step(-1));$('nextBtn').addEventListener('click',()=>step(1));
-document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{state.filter=b.dataset.filter;document.querySelectorAll('.filter').forEach(x=>x.classList.toggle('active',x===b));renderResults();}));
-$('showReview').addEventListener('change',renderResults);
+document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{state.filter=b.dataset.filter;document.querySelectorAll('.filter').forEach(x=>x.classList.toggle('active',x===b));const visible=filterDiffs(),next=visible.find(d=>d.index===state.active)||visible[0];if(next)selectDiff(next.index);else{state.active=-1;renderResults();}}));
+$('showReview').addEventListener('change',()=>{const visible=filterDiffs(),next=visible.find(d=>d.index===state.active)||visible[0];if(next)selectDiff(next.index);else{state.active=-1;renderResults();}});
+$('focusOnly').addEventListener('change',()=>{repaintOverlays(0);repaintOverlays(1);});
 $('groupCells').addEventListener('change',()=>{const current=state.diffs[state.active],id=current?.members?.[0]?.id||current?.id;state.diffs=$('groupCells').checked?groupChanges(state.rawDiffs):state.rawDiffs;const index=state.diffs.findIndex(d=>d.id===id||d.members?.some(m=>m.id===id));state.active=index;renderResults();if(index>=0)selectDiff(index);});
 
 $('exportBtn').addEventListener('click',()=>{
-  const output={app:'문서 비교실 v0.6',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
+  const output={app:'문서 비교실 v0.7',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
   const blob=new Blob([JSON.stringify(output,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`document-diff-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 
