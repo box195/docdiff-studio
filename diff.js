@@ -70,12 +70,17 @@ function compareWorkbook(a,b,ra,rb,options){
 
 function compareRecords(ra,rb,options){
   const out=[],usedL=new Set(),usedR=new Set();
+  // HWPX preserves a table ID and the logical cell address, including merged
+  // columns and empty cells. Use it only when both table shapes are unchanged.
+  const sourceCells=records=>{const map=new Map();records.forEach((r,i)=>{const key=r.meta?.hwpxCellKey;if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(i);});return map;};
+  const sourceL=sourceCells(ra),sourceR=sourceCells(rb);
+  for(const [key,left] of sourceL){const right=sourceR.get(key);if(left.length!==1||right?.length!==1)continue;const i=left[0],j=right[0];if(ra[i].meta.tableShape!==rb[j].meta.tableShape)continue;usedL.add(i);usedR.add(j);const diff=comparePair(ra[i],rb[j],options);if(diff)out.push(diff);}
   // Table cells have a better anchor than their absolute page position:
   // the unique first-column label and the column index. This also works
   // across XLSX/HWPX when the table has been moved or repaginated.
   const rowKeys=rs=>{const map=new Map();rs.forEach((r,i)=>{const key=r.role==='cell'&&r.meta?.rowKey&&r.meta?.col?`${norm(r.meta.rowKey,options.ignoreSpace)}::${r.meta.col}`:null;if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(i);});return map;};
   const lkeys=rowKeys(ra),rkeys=rowKeys(rb);
-  for(const [key,la] of lkeys){const rbs=rkeys.get(key);if(!rbs||la.length!==1||rbs.length!==1)continue;const i=la[0],j=rbs[0];usedL.add(i);usedR.add(j);const diff=comparePair(ra[i],rb[j],options);if(diff)out.push(diff);}
+  for(const [key,la] of lkeys){const rbs=rkeys.get(key);if(!rbs||la.length!==1||rbs.length!==1)continue;const i=la[0],j=rbs[0];if(usedL.has(i)||usedR.has(j))continue;usedL.add(i);usedR.add(j);const diff=comparePair(ra[i],rb[j],options);if(diff)out.push(diff);}
   const bBuckets=new Map();
   rb.forEach((r,j)=>{if(usedR.has(j))return;const key=norm(r.text,options.ignoreSpace);if(!bBuckets.has(key))bBuckets.set(key,[]);bBuckets.get(key).push(j);});
   // Exact matches first. Within duplicate text, preserve relative occurrence order.
@@ -117,7 +122,7 @@ export function contentDifferences(a,b,options){
 
 function newCanvas(){return document.createElement('canvas');}
 async function pixels(doc,index){
-  const {renderPage}=await import('./readers.js');
+  const {renderPage}=await import('./readers.js?v=20261028-4');
   const source=newCanvas();await renderPage(doc,index,source,550);
   const canvas=newCanvas();canvas.width=420;canvas.height=570;
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.fillStyle='white';ctx.fillRect(0,0,420,570);
@@ -141,6 +146,7 @@ function tileRegions(A,B){
 }
 
 export async function visualDifferences(a,b,options,onProgress=()=>{}){
+  if(a.type==='hwpx'||b.type==='hwpx'){onProgress(0,'HWPX는 원본 화면 재현을 지원하지 않아 본문 검사로 전환');const out=contentDifferences(a,b,{...options,mode:'precision'});onProgress(1,'HWPX 본문 검사 완료');return out.map(d=>({...d,detail:d.detail+' (HWPX 본문 비교; 원본 배치·픽셀 검사 제외)'}));}
   if(a.type==='xlsx'&&b.type==='xlsx'){onProgress(0,'행 대응을 맞춘 뒤 내용·서식 검사');await new Promise(resolve=>setTimeout(resolve,0));const out=contentDifferences(a,b,{...options,mode:'precision'});onProgress(1,'엑셀 행 정렬 후 검사 완료');return out.map(d=>({...d,detail:d.detail+' (행 정렬 적용; 엑셀 화면은 구조 기반 미리보기)'}));}
   const n=Math.min(a.pages.length,b.pages.length),out=[];
   const scopeA=options.pagesA||new Set(a.pages.map((_,i)=>i)),scopeB=options.pagesB||new Set(b.pages.map((_,i)=>i));

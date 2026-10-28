@@ -147,9 +147,10 @@ async function readXlsx(file,zip,onProgress){
 async function readHwpx(file,zip,onProgress){
   const sectionFiles=Object.keys(zip.files).filter(p=>/^Contents\/section\d+\.xml$/i.test(p)).sort((a,b)=>Number(a.match(/\d+/)?.[0]||0)-Number(b.match(/\d+/)?.[0]||0));
   if(!sectionFiles.length)throw new Error('HWPX의 본문 XML을 찾지 못했습니다.');
-  const doc={name:trimFileName(file.name),type:'hwpx',pages:[],records:[],warnings:['HWPX 미리보기는 구조 기반이며 한글 프로그램의 실제 페이지 나눔·글꼴·표 위치와 다를 수 있습니다.']};
-  let current=page('한글 문서 1페이지'),y=45;
-  const newPage=()=>{doc.pages.push(current);current=page(`한글 문서 ${doc.pages.length+1}페이지`);y=45;};
+  const doc={name:trimFileName(file.name),type:'hwpx',pages:[],records:[],warnings:['HWPX는 본문 추출 보기입니다. 표시 구간은 원본 쪽수가 아니며 실제 한글 배치·서식은 재현하지 않습니다. 댓글은 본문 비교에서 제외합니다.']};
+  let tableIndex=0,memoCount=0;
+  let current=page('본문 추출 1구간 · 한글 원본 배치 아님'),y=45;
+  const newPage=()=>{doc.pages.push(current);current=page(`본문 추출 ${doc.pages.length+1}구간 · 한글 원본 배치 아님`);y=45;};
   const add=(text,role='paragraph',label='',style=null)=>{
     if(!text?.trim())return;
     const length=role==='cell'?65:60,lines=Math.max(1,Math.ceil(text.length/length)),height=Math.min(164,Math.max(28,lines*22+7));
@@ -157,32 +158,38 @@ async function readHwpx(file,zip,onProgress){
     const r={id:`hwpx-${doc.records.length}`,role,text,label:label||`문단 ${doc.records.length+1}`,page:doc.pages.length,rect:{x:58,y,w:680,h:height},style};
     doc.records.push(r);current.elements.push({kind:role==='cell'?'tablecell':'paragraph',text,x:58,y,w:680,h:height});y+=height+8;
   };
-  const addTableRow=(values,section,row)=>{
+  const addTableRow=(values,section,row,table)=>{
     if(!values.length)return;
     const height=46;if(y+height>1060)newPage();
-    const width=680/values.length,rowKey=values[0]||'';
-    values.forEach((text,col)=>{
-      const x=58+col*width,rect={x,y,w:width,h:height};
-      const r={id:`hwpx-${doc.records.length}`,role:'cell',text,label:`표 ${section+1} / ${row+1}행 ${col+1}열`,page:doc.pages.length,rect,style:null,meta:{rowKey,col:col+1,tableSection:section,tableRow:row+1}};
+    const width=680/table.columns,rowKey=values[0]?.text||'';
+    values.forEach(({text,column,rowNumber,colSpan})=>{
+      const x=58+(column-1)*width,rect={x,y,w:width*colSpan,h:height};
+      const r={id:`hwpx-${doc.records.length}`,role:'cell',text,label:`표 ${table.index} / ${rowNumber}행 ${column}열`,page:doc.pages.length,rect,style:null,meta:{rowKey,col:column,tableSection:section,tableRow:rowNumber,tableId:table.id,tableIndex:table.index,hwpxCellKey:table.id?`${section}:${table.id}:${rowNumber}:${column}`:null,tableShape:table.shape}};
       doc.records.push(r);current.elements.push({kind:'tablecell',text,...rect});
     });
     y+=height+7;
   };
   for(let si=0;si<sectionFiles.length;si++){
     const root=xml(await zip.file(sectionFiles[si]).async('string'));
+    // MEMO fields live inside the owning cell's XML but are margin comments,
+    // not text printed in that cell. Remove only the in-memory comment subtree.
+    for(const memo of descendants(root,'fieldBegin').filter(n=>attr(n,'type').toUpperCase()==='MEMO')){memoCount++;memo.parentNode?.removeChild(memo);}
+    const ownText=node=>descendants(node,'t').filter(t=>{let p=t.parentNode;while(p&&p!==node){if(p.localName==='tbl')return false;p=p.parentNode;}return true;}).map(t=>t.textContent||'').join('');
     const walk=(node,inTable=false)=>{
       if(node.localName==='tbl'){
-        const tableRows=descendants(node,'tr');
-        tableRows.forEach((tr,row)=>{const cells=children(tr,'tc');const vals=cells.map(tc=>exactText(tc).trim().replace(/\s+/g,' '));addTableRow(vals,si,row);});
+        const tableRows=children(node,'tr'),cells=tableRows.flatMap(tr=>children(tr,'tc'));
+        const table={id:attr(node,'id'),index:++tableIndex,columns:Math.max(1,Number(attr(node,'colCnt'))||Math.max(0,...tableRows.map(tr=>children(tr,'tc').length))),shape:JSON.stringify([attr(node,'rowCnt'),attr(node,'colCnt'),cells.map(tc=>[...children(tc,'cellAddr'),...children(tc,'cellSpan')].map(c=>Array.from(c.attributes).map(a=>[a.name,a.value]).sort()))])};
+        tableRows.forEach((tr,row)=>{const vals=children(tr,'tc').map((tc,col)=>{const address=firstChild(tc,'cellAddr'),span=firstChild(tc,'cellSpan');return {text:ownText(tc).trim().replace(/\s+/g,' '),column:Number(attr(address,'colAddr',String(col)))+1,rowNumber:Number(attr(address,'rowAddr',String(row)))+1,colSpan:Math.max(1,Number(attr(span,'colSpan','1')))}});addTableRow(vals,si,row,table);for(const tc of children(tr,'tc'))for(const nested of descendants(tc,'tbl').filter(t=>{let p=t.parentNode;while(p&&p!==tc){if(p.localName==='tbl')return false;p=p.parentNode;}return true;}))walk(nested,true);});
         return;
       }
-      if(node.localName==='p'&&!inTable){const tables=descendants(node,'tbl');if(tables.length){const ownText=descendants(node,'t').filter(t=>{let p=t.parentNode;while(p&&p!==node){if(p.localName==='tbl')return false;p=p.parentNode}return true}).map(t=>t.textContent||'').join('');add(ownText,'paragraph',`본문 ${si+1}`);for(const table of tables.filter(t=>{let p=t.parentNode;while(p&&p!==node){if(p.localName==='tbl')return false;p=p.parentNode}return true}))walk(table,true)}else add(exactText(node),'paragraph',`본문 ${si+1}`);return;}
+      if(node.localName==='p'&&!inTable){const tables=descendants(node,'tbl');add(ownText(node),'paragraph',`본문 ${si+1}`);for(const table of tables.filter(t=>{let p=t.parentNode;while(p&&p!==node){if(p.localName==='tbl')return false;p=p.parentNode}return true}))walk(table,true);return;}
       for(const ch of Array.from(node.children||[]))walk(ch,inTable);
     };
     walk(root.documentElement);onProgress((si+1)/sectionFiles.length*.85,`한글 문서 ${si+1}/${sectionFiles.length}구역`);
     await new Promise(resolve=>setTimeout(resolve,0));
   }
   doc.pages.push(current);
+  if(memoCount)doc.warnings.push(`댓글 ${memoCount}개를 본문에서 제외했습니다.`);
   if(!doc.records.length)doc.warnings.push('본문 텍스트를 찾지 못했습니다. 지원되지 않는 HWPX 개체가 포함됐을 수 있습니다.');
   return doc;
 }
