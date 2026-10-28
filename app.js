@@ -1,8 +1,10 @@
 import {readDocument,renderPage,demoDocuments} from './readers.js';
 import {contentDifferences,visualDifferences,parsePageRanges,summarize} from './diff.js';
+import {groupChanges,navigationDirection,revealInList} from './review-navigation.js';
 
 const $=id=>document.getElementById(id);
-const state={files:[null,null],docs:[null,null],pages:[0,0],regions:[null,null],diffs:[],active:-1,filter:'all',busy:false,renderSeq:[0,0],lastOptions:null};
+const state={files:[null,null],docs:[null,null],pages:[0,0],regions:[null,null],rawDiffs:[],diffs:[],active:-1,filter:'all',busy:false,renderSeq:[0,0],selectionSeq:0,lastOptions:null};
+let selectionTask=Promise.resolve();
 const sideLetter=i=>i===0?'A':'B';
 const ftext=(value,limit=130)=>String(value??'').length>limit?`${String(value).slice(0,limit)}…`:String(value??'');
 const setStatus=(message,error=false)=>{$('status').textContent=message;$('status').style.color=error?'#c45a54':'#708b97';};
@@ -16,7 +18,7 @@ function updateSelectedFile(i,file){
   const side=sideLetter(i);
   $(`fileName${side}`).textContent=file?ftext(file.name,28):i===0?'원본 파일 선택':'수정 파일 선택';
   $(`fileMeta${side}`).textContent=file?`${(file.size/1024/1024).toFixed(2)}MB · ${file.name.split('.').pop().toUpperCase()}`:'클릭하거나 여기에 끌어놓기';
-  state.diffs=[];state.active=-1;renderResults();
+  state.rawDiffs=[];state.diffs=[];state.active=-1;state.selectionSeq++;renderResults();
 }
 function bindDrop(i){
   const side=sideLetter(i),input=$(`file${side}`),zone=$(`drop${side}`);
@@ -32,7 +34,7 @@ $('swapBtn').addEventListener('click',()=>{
   [state.docs[0],state.docs[1]]=[state.docs[1],state.docs[0]];
   [state.regions[0],state.regions[1]]=[state.regions[1],state.regions[0]];
   for(let i=0;i<2;i++){const file=state.files[i],side=sideLetter(i);$(`fileName${side}`).textContent=file?file.name:i?'수정 파일 선택':'원본 파일 선택';$(`fileMeta${side}`).textContent=file?`${(file.size/1024/1024).toFixed(2)}MB`:'파일을 선택하세요.';}
-  state.diffs=[];state.active=-1;renderResults();if(state.docs[0])showPage(0,0);if(state.docs[1])showPage(1,0);
+  state.rawDiffs=[];state.diffs=[];state.active=-1;state.selectionSeq++;renderResults();if(state.docs[0])showPage(0,0);if(state.docs[1])showPage(1,0);
 });
 
 function getOptions(){
@@ -73,12 +75,12 @@ async function compare(){
         diffs.push(...visual.filter(v=>!diffs.some(d=>overlaps(v.left,d.left)||overlaps(v.right,d.right))));
       }else diffs=visual;
     }
-    state.diffs=diffs;state.active=diffs.length?0:-1;state.filter='all';document.querySelectorAll('.filter').forEach(btn=>btn.classList.toggle('active',btn.dataset.filter==='all'));
+    state.rawDiffs=diffs;state.diffs=$('groupCells').checked?groupChanges(diffs):diffs;state.active=state.diffs.length?0:-1;state.filter='all';document.querySelectorAll('.filter').forEach(btn=>btn.classList.toggle('active',btn.dataset.filter==='all'));
     progress(1,'비교 완료');renderResults();
     if(state.active>=0)await selectDiff(0);else setStatus('선택한 조건에서 차이가 발견되지 않았습니다. 검사 불가 항목도 함께 확인하세요.');
     const warnings=[...state.docs[0].warnings,...state.docs[1].warnings];
     if(opts.mode==='precision'&&state.docs.some(d=>d.type!=='pdf'))warnings.push('이 형식 조합은 서식·인쇄 좌표를 완전히 비교하지 못하며 화면 보조 검사가 생략될 수 있습니다.');
-    if(warnings.length)setStatus(`${diffs.length}건 결과. 주의: ${[...new Set(warnings)].join(' / ')}`);
+    if(warnings.length)setStatus(`${state.diffs.length}건 결과. 주의: ${[...new Set(warnings)].join(' / ')}`);
   }catch(e){setStatus(`비교 실패: ${e.message||e}`,true);console.error(e);}
   finally{state.busy=false;$('compareBtn').disabled=false;setTimeout(()=>$('progressBox').classList.add('hidden'),1800);}
 }
@@ -151,7 +153,7 @@ document.querySelectorAll('input[name="mode"]').forEach(r=>r.addEventListener('c
 const filterDiffs=()=>state.diffs.map((d,i)=>({...d,index:i})).filter(d=>state.filter==='all'||d.type===state.filter).filter(d=>$('showReview').checked||d.type!=='review');
 function renderResults(){
   const visible=filterDiffs(),counts=summarize(state.diffs);
-  $('resultCount').textContent=visible.length;$('changeCounter').textContent=state.diffs.length?`전체 ${state.diffs.length}건 · 선택 ${state.active+1}/${state.diffs.length}`:'차이점 없음';
+  $('resultCount').textContent=visible.length;$('changeCounter').textContent=state.diffs.length?`전체 ${state.diffs.length}건 · 선택 ${Math.max(0,visible.findIndex(d=>d.index===state.active)+1)}/${visible.length}${state.rawDiffs.length>state.diffs.length?` · 셀별 ${state.rawDiffs.length}건`:''}`:'차이점 없음';
   $('summaryChips').innerHTML=`<span>수정 ${counts.changed||0}</span><span>추가 ${counts.added||0}</span><span>삭제 ${counts.removed||0}</span><span>확인 ${counts.review||0}</span>`;
   $('prevBtn').disabled=$('nextBtn').disabled=!visible.length;$('exportBtn').disabled=!state.diffs.length;
   const list=$('resultsList');list.replaceChildren();
@@ -161,36 +163,43 @@ function renderResults(){
     const symbol={changed:'≠',added:'+',removed:'−',review:'?'}[d.type],labels={changed:'수정',added:'추가',removed:'삭제',review:'확인 필요'};
     const a=d.left?.page!=null?`원본 ${d.left.page+1}쪽`:'원본 없음',b=d.right?.page!=null?`수정본 ${d.right.page+1}쪽`:'수정본 없음';
     card.innerHTML=`<span class="result-icon ${d.type}">${symbol}</span><div class="result-content"><strong>#${d.index+1} ${labels[d.type]} · ${escapeHtml(d.detail)}</strong><p>${escapeHtml(ftext(d.oldText,110))} <b>→</b> ${escapeHtml(ftext(d.newText,110))}</p><span class="result-meta">${a} / ${b} · ${escapeHtml(d.category)}${d.confidence!=='certain'?' · 추정':''}</span></div>`;
-    card.addEventListener('click',()=>selectDiff(d.index));card.addEventListener('keydown',e=>{if(e.key==='Enter')selectDiff(d.index);});list.appendChild(card);
+    if(d.members){const details=document.createElement('details');details.className='cell-details';details.innerHTML=`<summary>셀별 상세 ${d.members.length}개</summary>${d.members.map(m=>{const r=m.right||m.left;return `<p><b>${escapeHtml(r.meta.sheet)} · ${r.meta.row}행 ${r.meta.col}열</b><br>${escapeHtml(m.oldText)} → ${escapeHtml(m.newText)}<br>${escapeHtml(m.detail)}</p>`;}).join('')}`;details.addEventListener('click',e=>e.stopPropagation());card.querySelector('.result-content').appendChild(details);}
+    card.addEventListener('click',()=>selectDiff(d.index));card.addEventListener('keydown',e=>{if(e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();selectDiff(d.index);}});list.appendChild(card);
   }
   repaintOverlays(0);repaintOverlays(1);
 }
 
-async function selectDiff(index){
+function selectDiff(index){
   if(index<0||index>=state.diffs.length)return;
-  state.active=index;const d=state.diffs[index];
-  for(let i=0;i<2;i++){const r=i===0?d.left:d.right;if(r?.page!=null)await showPage(i,r.page);}
-  renderResults();
-  const cards=$('resultsList').querySelectorAll('.result.current');if(cards[0])cards[0].scrollIntoView({block:'nearest'});
-  for(let i=0;i<2;i++){const doc=state.docs[i],r=i===0?d.left:d.right;if(!r?.rect||!doc)continue;const side=sideLetter(i),vp=$(`viewport${side}`),pg=doc.pages[r.page],shell=$(`shell${side}`);const factor=shell.getBoundingClientRect().width/pg.width;vp.scrollTop=Math.max(0,(r.rect.y+r.rect.h/2)*factor-vp.clientHeight/2);}
+  state.active=index;const d=state.diffs[index],token=++state.selectionSeq;renderResults();
+  const preview=$('previewWorkspace');preview.focus({preventScroll:true});const box=preview.getBoundingClientRect();if(box.top<0||box.top>window.innerHeight-120){const navigation=$('changeNavigation');window.scrollBy({top:navigation.getBoundingClientRect().top-12,behavior:'instant'});}
+  revealInList($('resultsList'),$('resultsList').querySelector('.result.current'));
+  // Serialize page renders and skip superseded selections when arrows repeat quickly.
+  selectionTask=selectionTask.catch(()=>{}).then(async()=>{
+    if(token!==state.selectionSeq)return;
+    for(let i=0;i<2;i++){const r=i===0?d.left:d.right;if(r?.page!=null&&state.pages[i]!==r.page)await showPage(i,r.page);if(token!==state.selectionSeq)return;}
+    for(let i=0;i<2;i++){repaintOverlays(i);const doc=state.docs[i],r=i===0?d.left:d.right;if(!r?.rect||!doc)continue;const side=sideLetter(i),vp=$(`viewport${side}`),pg=doc.pages[r.page],shell=$(`shell${side}`);const factor=shell.getBoundingClientRect().width/pg.width;vp.scrollTop=Math.max(0,(r.rect.y+r.rect.h/2)*factor-vp.clientHeight/2);}
+  }).catch(e=>setStatus(`미리보기 이동 실패: ${e.message||e}`,true));
+  return selectionTask;
 }
-function step(direction){const visible=filterDiffs().map(d=>d.index);if(!visible.length)return;const i=visible.indexOf(state.active);const next=visible[(i+direction+visible.length)%visible.length];selectDiff(next);}
+function step(direction){if(state.busy)return;const visible=filterDiffs().map(d=>d.index);if(!visible.length)return false;const i=visible.indexOf(state.active);const next=visible[i<0?(direction>0?0:visible.length-1):(i+direction+visible.length)%visible.length];selectDiff(next);return true;}
 $('prevBtn').addEventListener('click',()=>step(-1));$('nextBtn').addEventListener('click',()=>step(1));
 document.querySelectorAll('.filter').forEach(b=>b.addEventListener('click',()=>{state.filter=b.dataset.filter;document.querySelectorAll('.filter').forEach(x=>x.classList.toggle('active',x===b));renderResults();}));
 $('showReview').addEventListener('change',renderResults);
+$('groupCells').addEventListener('change',()=>{const current=state.diffs[state.active],id=current?.members?.[0]?.id||current?.id;state.diffs=$('groupCells').checked?groupChanges(state.rawDiffs):state.rawDiffs;const index=state.diffs.findIndex(d=>d.id===id||d.members?.some(m=>m.id===id));state.active=index;renderResults();if(index>=0)selectDiff(index);});
 
 $('exportBtn').addEventListener('click',()=>{
-  const output={app:'문서 비교실 v0.2',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
+  const output={app:'문서 비교실 v0.3',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
   const blob=new Blob([JSON.stringify(output,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`document-diff-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 
 $('clearBtn').addEventListener('click',()=>{
-  state.files=[null,null];state.docs=[null,null];state.diffs=[];state.active=-1;state.pages=[0,0];state.regions=[null,null];
+  state.files=[null,null];state.docs=[null,null];state.rawDiffs=[];state.diffs=[];state.active=-1;state.selectionSeq++;state.pages=[0,0];state.regions=[null,null];
   for(const side of ['A','B']){$(`file${side}`).value='';$(`fileName${side}`).textContent=side==='A'?'원본 파일 선택':'수정 파일 선택';$(`fileMeta${side}`).textContent='클릭하거나 끌어놓기';$(`shell${side}`).style.display='none';$(`empty${side}`).classList.remove('hidden');$(`paneTitle${side}`).textContent=side==='A'?'원본 문서':'수정 문서';$(`pageInfo${side}`).textContent='— / —';}
   $('exportBtn').disabled=true;setStatus('초기화했습니다. 파일을 선택하세요.');renderResults();
 });
 
 $('helpBtn').addEventListener('click',()=>$('helpDialog').showModal());$('closeHelp').addEventListener('click',()=>$('helpDialog').close());
-document.addEventListener('keydown',e=>{if(e.key==='F3'){e.preventDefault();step(e.shiftKey?-1:1);}if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();compare();}});
+document.addEventListener('keydown',e=>{if($('helpDialog').open)return;const direction=navigationDirection(e);if(direction&&step(direction))e.preventDefault();if(e.key==='F3'){e.preventDefault();step(e.shiftKey?-1:1);}if(e.ctrlKey&&e.key==='Enter'){e.preventDefault();compare();}});
 
 renderResults();
