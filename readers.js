@@ -20,10 +20,13 @@ const page = (title,kind='generated') => ({title,kind,width:PAGE_WIDTH,height:PA
 const point = (r,x,y,w,h) => {r.pageRect={x,y,w,h};return r;};
 const guardZip = zip => { const arr=Object.values(zip.files);if(arr.length>6000)throw new Error('압축 내부 파일 수가 지나치게 많습니다.');let total=0;for(const f of arr){total+=(f._data?.uncompressedSize||0);if(total>180*1024*1024)throw new Error('압축 해제 크기가 안전 제한을 초과했습니다.');} };
 
-export async function readDocument(file,onProgress=()=>{}){
+export async function readDocument(file,onProgress=()=>{},settings={}){
   if(!file)throw new Error('문서를 먼저 선택하세요.');
   if(file.size>80*1024*1024)throw new Error('첫 버전은 파일당 80MB까지 지원합니다.');
   const ext=file.name.split('.').pop().toLowerCase();
+  if(['hwp','hwpx'].includes(ext)&&settings.hwpPreview!=='text'){
+    const {readHwpPages}=await import('./hwp-renderer.js?v=20261028-5');return readHwpPages(file,onProgress);
+  }
   if(ext==='hwp')throw new Error('구형 HWP는 이 웹앱에서 직접 해석할 수 없습니다. 한글에서 HWPX 또는 PDF로 저장한 뒤 선택해 주세요.');
   if(ext==='pdf')return readPdf(file,onProgress);
   if(!['xlsx','hwpx'].includes(ext))throw new Error('PDF, XLSX, HWPX 파일을 선택해 주세요.');
@@ -196,7 +199,9 @@ async function readHwpx(file,zip,onProgress){
 
 export async function renderPage(doc,index,canvas,width=800){
   const pg=doc.pages[index];if(!pg)return;
-  if(doc.type==='pdf'){
+  if(doc.preview==='hwp-layout'){
+    const {renderHwpPage}=await import('./hwp-renderer.js?v=20261028-5');await renderHwpPage(doc,index,canvas,width);
+  }else if(doc.type==='pdf'){
     const pdfpage=await doc.pdf.getPage(index+1),base=pdfpage.getViewport({scale:1}),scale=width/base.width;
     const vp=pdfpage.getViewport({scale});canvas.width=Math.round(vp.width);canvas.height=Math.round(vp.height);
     const ctx=canvas.getContext('2d',{alpha:false});ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);

@@ -1,5 +1,6 @@
-import {readDocument,demoDocuments,renderPage} from './readers.js';
-import {contentDifferences,visualDifferences,parsePageRanges} from './diff.js';
+import {readDocument as readAnyDocument,demoDocuments,renderPage} from './readers.js?v=20261028-5';
+const readDocument=(file,progress)=>readAnyDocument(file,progress,{hwpPreview:'text'});
+import {contentDifferences,visualDifferences,parsePageRanges} from './diff.js?v=20261028-5';
 const el=document.getElementById('results');const results=[];
 async function test(name,fn){try{const detail=await fn();results.push({name,pass:true,detail});const li=document.createElement('li');li.className='pass';li.textContent=`✓ ${name} — ${detail}`;el.appendChild(li);}catch(e){results.push({name,pass:false,error:String(e.stack||e)});const li=document.createElement('li');li.className='fail';li.textContent=`✕ ${name} — ${e.message||e}`;el.appendChild(li);}}
 const ensure=(v,message)=>{if(!v)throw Error(message)};
@@ -24,4 +25,6 @@ await test('서로 다른 페이지 내용 영역 선택',async()=>{const [a,b]=
 await test('캔버스 렌더링',async()=>{const [a]=demoDocuments(),c=document.createElement('canvas');await renderPage(a,0,c);ensure(c.width===800&&c.height===1120,'캔버스 크기 오류');return `${c.width}×${c.height} 출력`;});
 await test('화면 픽셀 차이 검출',async()=>{const [a,b]=demoDocuments(),d=await visualDifferences(a,b,{mode:'visual'});ensure(d.length>0,'시각적 변경 미검출');return `${d.length}개 변경 영역`;});
 await test('PDF 실제 문서 파싱·렌더링',async()=>{const resp=await fetch('./fixtures/test.pdf');ensure(resp.ok,'테스트 PDF 없음');const d=await readDocument(new File([await resp.blob()],'test.pdf'));ensure(d.pages.length===1&&d.records.some(r=>r.text.includes('Sample PDF')),'PDF 텍스트 누락');const c=document.createElement('canvas');await renderPage(d,0,c,480);ensure(c.width>0&&c.height>0,'PDF 화면 렌더링 실패');return `PDF ${d.records.length}개 문장 추출·렌더링`;});
+await test('HWP 페이지 엔진 실제 바이너리 열기·렌더링',async()=>{const api=await import('./vendor/rhwp/rhwp.js');await api.default({module_or_path:new URL('./vendor/rhwp/rhwp_bg.wasm',import.meta.url)});const native=api.HwpDocument.createEmpty();native.insertText(0,0,0,'가상 한글 페이지 검증');const file=new File([native.exportHwp()],'synthetic.hwp');native.free();const doc=await readAnyDocument(file);const canvas=document.createElement('canvas');await renderPage(doc,0,canvas,480);ensure(doc.preview==='hwp-layout'&&canvas.width===480&&doc.records.some(r=>r.text.includes('가상 한글')),'한글 페이지 표시 실패');doc.dispose();return 'HWP 바이너리 및 실제 페이지 캔버스 확인';});
+await test('HWPX 페이지 엔진 동일 문서 오탐 없음',async()=>{const api=await import('./vendor/rhwp/rhwp.js');const native=api.HwpDocument.createEmpty();native.insertText(0,0,0,'같은 문서 비교 검증');const file=new File([native.exportHwpx()],'synthetic.hwpx');native.free();const a=await readAnyDocument(file),b=await readAnyDocument(file);ensure(contentDifferences(a,b,opts).length===0,'동일 HWPX 오탐');a.dispose();b.dispose();return '동일 HWPX 결과 0건';});
 const passed=results.filter(x=>x.pass).length;document.getElementById('summary').textContent=`${passed}/${results.length}건 통과\n`+results.filter(x=>!x.pass).map(x=>x.error).join('\n\n');

@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>문서 비교실 — Excel · HWPX · PDF</title>
+  <title>문서 비교실 — Excel · 한글 · PDF</title>
   <meta name="description" content="파일을 외부에 업로드하지 않고 Excel, HWPX, PDF를 비교하는 웹앱" />
-  <link rel="stylesheet" href="./styles.css?v=20261028-4" />
+  <link rel="stylesheet" href="./styles.css?v=20261028-5" />
 </head>
 <body>
   <header class="topbar">
@@ -18,7 +18,7 @@
       <div class="section-heading"><span>01</span><h2>비교할 문서</h2></div>
       <label class="dropzone" id="dropA" for="fileA"><span class="file-icon">A</span><strong id="fileNameA">원본 파일 선택</strong><small id="fileMetaA">클릭하거나 여기에 끌어놓기</small><input id="fileA" type="file" accept=".pdf,.xlsx,.hwpx,.hwp" hidden></label>
       <div class="swap-wrap"><button id="swapBtn" class="swap-btn" aria-label="원본과 수정본 바꾸기">↕ <span>파일 순서 바꾸기</span></button></div>
-      <label class="dropzone" id="dropB" for="fileB"><span class="file-icon new">B</span><strong id="fileNameB">수정 파일 선택</strong><small id="fileMetaB">PDF · XLSX · HWPX 지원</small><input id="fileB" type="file" accept=".pdf,.xlsx,.hwpx,.hwp" hidden></label>
+      <label class="dropzone" id="dropB" for="fileB"><span class="file-icon new">B</span><strong id="fileNameB">수정 파일 선택</strong><small id="fileMetaB">PDF · XLSX · HWP · HWPX 지원</small><input id="fileB" type="file" accept=".pdf,.xlsx,.hwpx,.hwp" hidden></label>
 
       <div class="section-heading spaced"><span>02</span><h2>비교 방식</h2></div>
       <div class="segmented" role="radiogroup" aria-label="비교 모드">
@@ -26,7 +26,7 @@
         <label><input type="radio" name="mode" value="precision" checked><span>정밀</span></label>
         <label><input type="radio" name="mode" value="visual"><span>화면</span></label>
       </div>
-      <p id="modeHint" class="hint">내용과 구조·가용 서식을 비교하고, PDF끼리는 화면 차이도 검사합니다.</p>
+      <p id="modeHint" class="hint">내용과 가용 서식을 비교하고, PDF·한글 페이지는 화면 차이도 검사합니다.</p>
 
       <div class="section-heading spaced"><span>03</span><h2>비교 범위</h2></div>
       <div class="scope-choice"><label><input type="radio" name="scope" value="all" checked>전체</label><label><input type="radio" name="scope" value="pages">페이지 범위</label><label><input type="radio" name="scope" value="region">직접 영역 지정</label></div>
@@ -40,7 +40,7 @@
       <button id="demoBtn" class="secondary-btn">예제 문서로 체험</button>
       <div id="progressBox" class="progress-box hidden"><div class="progress-heading"><span id="progressText">분석 준비 중</span><span id="progressPercent">0%</span></div><div class="progress-track"><div id="progressBar"></div></div></div>
       <p id="status" class="status-text" role="status">파일을 선택하거나 예제로 시작하세요.</p>
-      <div class="side-footer"><strong>처리 범위 안내</strong><p>PDF는 실제 페이지 미리보기, XLSX·HWPX는 구조 기반 미리보기입니다. HWPX의 표시 구간은 원본 쪽수가 아니며 댓글은 제외합니다. 원본 화면은 PDF로 저장해 비교하세요. 구형 HWP는 HWPX/PDF 변환이 필요합니다. 스캔 PDF의 OCR은 이번 버전에서 지원하지 않습니다.</p></div>
+      <div class="side-footer"><strong>처리 범위 안내</strong><p>PDF와 한글(HWP·HWPX)은 페이지 위에서 비교하고, XLSX는 구조 기반으로 보여줍니다. 한글은 브라우저용 페이지 엔진을 사용하므로 일부 글꼴·개체는 한컴과 다를 수 있습니다. 댓글은 제외하며 스캔 PDF OCR은 지원하지 않습니다.</p></div>
     </aside>
 
     <main class="main">
@@ -57,8 +57,8 @@
     </main>
   </div>
 
-  <dialog id="helpDialog"><div class="dialog-head"><h2>문서 비교실 안내</h2><button id="closeHelp" aria-label="닫기">×</button></div><p>PDF는 실제 페이지를 렌더링합니다. HWPX는 본문 추출 보기이며 원본 쪽수·배치·글꼴·서식을 재현하지 않습니다. 댓글은 본문에서 제외합니다. 한글 원본 화면 위에서 비교하려면 두 파일을 한글에서 PDF로 저장해 선택하세요. XLSX도 구조 기반 미리보기입니다.</p><ul><li><b>빠른:</b> 텍스트와 숫자 중심</li><li><b>정밀:</b> 텍스트와 가능한 서식, PDF끼리는 시각 비교</li><li><b>화면:</b> PDF는 원본 화면을 검사하며 HWPX는 본문 비교로 전환, Excel끼리는 행 정렬 후 내용·가용 서식을 검사</li><li><b>영역:</b> 두 문서에서 각각 드래그하여 선택 후 비교 시작</li><li><b>단축키:</b> ←·↑ 이전 변경, →·↓ 다음 변경 (입력 중에는 적용하지 않음)</li><li><b>연속 셀:</b> 같은 행의 같은 종류 변경을 묶고 셀별 상세에서 각각 확인</li><li><b>결과:</b> 변화 항목 클릭 또는 이전·다음으로 해당 페이지 이동</li></ul><p>스캔된 PDF, 암호 문서, 구형 HWP는 일부 또는 전체 비교가 불가능합니다. 파일은 원격 서버에 업로드되지 않습니다.</p></dialog>
+  <dialog id="helpDialog"><div class="dialog-head"><h2>문서 비교실 안내</h2><button id="closeHelp" aria-label="닫기">×</button></div><p>PDF는 실제 페이지를 렌더링하고, HWP·HWPX는 브라우저용 페이지 엔진으로 표·병합·글자·여백을 재현합니다. 파일을 외부에 보내거나 임시 PDF를 저장하지 않습니다. 한컴 자체 엔진이 아니므로 일부 글꼴·특수 개체·페이지 나눔은 다를 수 있습니다. 댓글은 본문에서 제외합니다. XLSX는 구조 기반 미리보기입니다.</p><ul><li><b>빠른:</b> 텍스트와 숫자 중심</li><li><b>정밀:</b> 텍스트와 가능한 서식, PDF끼리는 시각 비교</li><li><b>화면:</b> PDF·한글 페이지의 화면 차이를 검사하며 Excel끼리는 행 정렬 후 내용·가용 서식을 검사</li><li><b>영역:</b> 두 문서에서 각각 드래그하여 선택 후 비교 시작</li><li><b>단축키:</b> ←·↑ 이전 변경, →·↓ 다음 변경 (입력 중에는 적용하지 않음)</li><li><b>연속 셀:</b> 같은 행의 같은 종류 변경을 묶고 셀별 상세에서 각각 확인</li><li><b>결과:</b> 변화 항목 클릭 또는 이전·다음으로 해당 페이지 이동</li></ul><p>암호 문서·손상 파일·일부 오래된 한글 문서는 열리지 않을 수 있습니다. 스캔 PDF의 OCR은 지원하지 않습니다. 파일은 원격 서버에 업로드되지 않습니다.</p></dialog>
   <script src="./vendor/jszip.min.js"></script>
-  <script type="module" src="./app.js?v=20261028-4"></script>
+  <script type="module" src="./app.js?v=20261028-5"></script>
 </body>
 </html>

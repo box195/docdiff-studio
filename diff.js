@@ -25,6 +25,7 @@ function styleChanges(a,b){
   if(!a||!b)return[];
   const out=[];
   for(const key of ['font','size','bold','italic','color','fill','numFmtId','rowHeight','underline','strike','alignment','numberFormat','borderColor'])if(a[key]!=null&&b[key]!=null&&stable(a[key])!==stable(b[key]))out.push(key);
+  if(!out.length&&a.textStyles&&b.textStyles&&stable(a.textStyles)!==stable(b.textStyles))out.push('부분 글자 서식');
   if(a.border&&b.border)for(const side of ['left','right','top','bottom'])if(a.border[side]!==b.border[side])out.push(`${side} 테두리`);
   return out;
 }
@@ -43,7 +44,7 @@ function mappedFormula(formula,rowMap){
 function comparePair(a,b,options){
   if(!isSame(a.text,b.text,options.ignoreSpace))return mk('changed','content',a,b,'내용이 변경되었습니다.');
   if(options.mode==='precision'&&a.style&&b.style&&a.role===b.role){
-    const changed=styleChanges(a.style,b.style);if(changed.length)return mk('changed','format',a,b,`${changed.join(', ')} 서식 변경`);
+    const changed=styleChanges(a.style,b.style);if(changed.length)return mk('changed','format',a,b,`${changed.map(k=>k==='color'?`글자색 (${a.style.color} → ${b.style.color})`:k).join(', ')} 서식 변경`);
   }
   if(a.meta?.formula!=null&&b.meta?.formula!=null&&options.mode!=='fast'&&mappedFormula(a.meta.formula,options.rowMap)!==b.meta.formula)return mk(a.meta.formula.includes('!')||b.meta.formula.includes('!')?'review':'changed','formula',{...a,text:a.meta.formula?'='+a.meta.formula:a.text},{...b,text:b.meta.formula?'='+b.meta.formula:b.text},a.meta.formula.includes('!')||b.meta.formula.includes('!')?'다른 시트 참조를 포함하는 수식 변경입니다. 자동 참조 조정 여부를 확인하세요.':'행 이동을 반영해도 수식 자체가 변경됐습니다.',a.meta.formula.includes('!')||b.meta.formula.includes('!')?'uncertain':'certain');
   return null;
@@ -72,7 +73,7 @@ function compareRecords(ra,rb,options){
   const out=[],usedL=new Set(),usedR=new Set();
   // HWPX preserves a table ID and the logical cell address, including merged
   // columns and empty cells. Use it only when both table shapes are unchanged.
-  const sourceCells=records=>{const map=new Map();records.forEach((r,i)=>{const key=r.meta?.hwpxCellKey;if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(i);});return map;};
+  const sourceCells=records=>{const map=new Map();records.forEach((r,i)=>{const key=r.meta?.sourceCellKey||r.meta?.hwpxCellKey;if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(i);});return map;};
   const sourceL=sourceCells(ra),sourceR=sourceCells(rb);
   for(const [key,left] of sourceL){const right=sourceR.get(key);if(left.length!==1||right?.length!==1)continue;const i=left[0],j=right[0];if(ra[i].meta.tableShape!==rb[j].meta.tableShape)continue;usedL.add(i);usedR.add(j);const diff=comparePair(ra[i],rb[j],options);if(diff)out.push(diff);}
   // Table cells have a better anchor than their absolute page position:
@@ -122,7 +123,7 @@ export function contentDifferences(a,b,options){
 
 function newCanvas(){return document.createElement('canvas');}
 async function pixels(doc,index){
-  const {renderPage}=await import('./readers.js?v=20261028-4');
+  const {renderPage}=await import('./readers.js?v=20261028-5');
   const source=newCanvas();await renderPage(doc,index,source,550);
   const canvas=newCanvas();canvas.width=420;canvas.height=570;
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.fillStyle='white';ctx.fillRect(0,0,420,570);
@@ -146,7 +147,7 @@ function tileRegions(A,B){
 }
 
 export async function visualDifferences(a,b,options,onProgress=()=>{}){
-  if(a.type==='hwpx'||b.type==='hwpx'){onProgress(0,'HWPX는 원본 화면 재현을 지원하지 않아 본문 검사로 전환');const out=contentDifferences(a,b,{...options,mode:'precision'});onProgress(1,'HWPX 본문 검사 완료');return out.map(d=>({...d,detail:d.detail+' (HWPX 본문 비교; 원본 배치·픽셀 검사 제외)'}));}
+  if([a,b].some(d=>['hwp','hwpx'].includes(d.type)&&d.preview!=='hwp-layout')){onProgress(0,'본문 추출 문서는 화면 비교를 생략');const out=contentDifferences(a,b,{...options,mode:'precision'});onProgress(1,'HWPX 본문 검사 완료');return out.map(d=>({...d,detail:d.detail+' (HWPX 본문 비교; 원본 배치·픽셀 검사 제외)'}));}
   if(a.type==='xlsx'&&b.type==='xlsx'){onProgress(0,'행 대응을 맞춘 뒤 내용·서식 검사');await new Promise(resolve=>setTimeout(resolve,0));const out=contentDifferences(a,b,{...options,mode:'precision'});onProgress(1,'엑셀 행 정렬 후 검사 완료');return out.map(d=>({...d,detail:d.detail+' (행 정렬 적용; 엑셀 화면은 구조 기반 미리보기)'}));}
   const n=Math.min(a.pages.length,b.pages.length),out=[];
   const scopeA=options.pagesA||new Set(a.pages.map((_,i)=>i)),scopeB=options.pagesB||new Set(b.pages.map((_,i)=>i));
