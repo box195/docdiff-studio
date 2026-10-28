@@ -42,9 +42,15 @@
 - XLSX 화면 모드는 위치가 이동한 페이지 전체를 픽셀 비교하지 않고 정렬된 행의 내용·가용 서식 결과를 사용
 - 구조 비교는 Web Worker에서 처리하여 화면 멈춤을 줄임
 
-## GitHub와 Sites
+## GitHub Pages와 Sites
 
-GitHub 사본은 `box195/docdiff-studio` 비공개 저장소입니다. 기존 Sites 원본 소스 커밋 `69a198c3e0cc9c4d3fece1de57936554627c6f5b`에서 복구했습니다. GitHub 업로드와 Sites 배포는 별도이며 자동 배포 연결을 구성하지 않았습니다. 기존 Sites URL/접근 정책/배포 버전은 유지합니다. 수정본은 GitHub와 로컬 소스에 반영되며 기존 Sites 공개 화면에 자동 적용되지 않습니다.
+웹앱 주소: https://box195.github.io/docdiff-studio/
+
+사용자 요청에 따라 2026-10-28에 GitHub 저장소를 공개로 전환하고, `gh-pages` 브랜치 루트를 GitHub Pages 게시 소스로 설정합니다. 원본 소스는 `main`, 웹 실행 파일은 `dist/`에 있습니다. 문서는 브라우저 안에서 처리하며 서버에 업로드하지 않습니다.
+
+수정본을 배포하려면 테스트와 main 커밋/푸시 후 `git subtree split --prefix dist -b pages-release`, `git push github pages-release:gh-pages`를 실행합니다. Pages 배포는 해당 브랜치 푸시로 갱신됩니다. main만 푸시하면 배포가 갱신되지 않습니다. 재배포할 때는 아직 사용하지 않은 로컬 브랜치 이름을 지정하세요.
+
+기존 Sites 배포 및 접근 정책은 유지하며, GitHub Pages와 별도로 동작합니다. 기존 Sites 주소에 이 수정본을 재배포하지 않았습니다. 기존 Sites 원본 소스 커밋 `69a198c3e0cc9c4d3fece1de57936554627c6f5b`에서 복구했습니다.
 
 `dist/`가 실행 가능한 정적 웹앱이며 Windows EXE 설치 파일은 아닙니다. 소스·필요한 브라우저 라이브러리를 모두 포함합니다.
 
