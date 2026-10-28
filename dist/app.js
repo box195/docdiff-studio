@@ -1,5 +1,5 @@
-import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261028-4';
-import {contentDifferences,visualDifferences,parsePageRanges,summarize} from './diff.js?v=20261028-4';
+import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261028-5';
+import {contentDifferences,visualDifferences,parsePageRanges,summarize} from './diff.js?v=20261028-5';
 import {groupChanges,navigationDirection,revealInList} from './review-navigation.js';
 
 const $=id=>document.getElementById(id);
@@ -14,6 +14,7 @@ const escapeHtml=s=>String(s??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;
 function progress(percent,message){$('progressBox').classList.remove('hidden');$('progressText').textContent=message;$('progressBar').style.width=`${Math.round(percent*100)}%`;$('progressPercent').textContent=`${Math.round(percent*100)}%`;}
 
 function updateSelectedFile(i,file){
+  state.docs[i]?.dispose?.();
   state.files[i]=file;state.docs[i]=null;state.regions[i]=null;
   const side=sideLetter(i);
   $(`fileName${side}`).textContent=file?ftext(file.name,28):i===0?'원본 파일 선택':'수정 파일 선택';
@@ -57,7 +58,7 @@ async function ensureDocuments(){
 
 function backgroundCompare(a,b,options){
  if(typeof Worker==='undefined')return Promise.resolve(contentDifferences(a,b,options));
- return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261028-4',import.meta.url),{type:'module'});const clean=d=>({type:d.type,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
+ return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261028-5',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
 }
 async function compare(){
   if(state.busy)return;state.busy=true;$('compareBtn').disabled=true;
@@ -65,8 +66,8 @@ async function compare(){
     await ensureDocuments();
     const opts=getOptions();state.lastOptions=opts;
     progress(.82,'텍스트와 구조 비교');
-    const structuredOnly=state.docs.every(d=>d.type==='xlsx')||state.docs.some(d=>d.type==='hwpx');let diffs=opts.mode==='visual'&&!structuredOnly?[]:await backgroundCompare(state.docs[0],state.docs[1],{...opts,mode:opts.mode==='visual'?'precision':opts.mode});
-    const visualRequested=!structuredOnly&&(opts.mode==='visual'||(opts.mode==='precision'&&$('visualExtra').checked&&state.docs.every(d=>d.type==='pdf')));
+    const structuredOnly=state.docs.every(d=>d.type==='xlsx')||state.docs.some(d=>['hwp','hwpx'].includes(d.type)&&d.preview!=='hwp-layout');let diffs=opts.mode==='visual'&&!structuredOnly?[]:await backgroundCompare(state.docs[0],state.docs[1],{...opts,mode:opts.mode==='visual'?'precision':opts.mode});
+    const visualRequested=!structuredOnly&&(opts.mode==='visual'||(opts.mode==='precision'&&$('visualExtra').checked&&state.docs.every(d=>d.type==='pdf'||d.preview==='hwp-layout')));
     if(visualRequested){
       const visual=await visualDifferences(state.docs[0],state.docs[1],opts,(p,m)=>progress(.82+p*.17,m));
       if(opts.mode==='precision'){
@@ -79,7 +80,7 @@ async function compare(){
     progress(1,'비교 완료');renderResults();
     if(state.active>=0)await selectDiff(0);else setStatus('선택한 조건에서 차이가 발견되지 않았습니다. 검사 불가 항목도 함께 확인하세요.');
     const warnings=[...state.docs[0].warnings,...state.docs[1].warnings];
-    if(opts.mode==='precision'&&state.docs.some(d=>d.type!=='pdf'))warnings.push('이 형식 조합은 서식·인쇄 좌표를 완전히 비교하지 못하며 화면 보조 검사가 생략될 수 있습니다.');
+    if(opts.mode==='precision'&&state.docs.some(d=>d.type!=='pdf'&&d.preview!=='hwp-layout'))warnings.push('이 형식 조합은 서식·인쇄 좌표를 완전히 비교하지 못하며 화면 보조 검사가 생략될 수 있습니다.');
     if(warnings.length)setStatus(`${state.diffs.length}건 결과. 주의: ${[...new Set(warnings)].join(' / ')}`);
   }catch(e){setStatus(`비교 실패: ${e.message||e}`,true);console.error(e);}
   finally{state.busy=false;$('compareBtn').disabled=false;setTimeout(()=>$('progressBox').classList.add('hidden'),1800);}
@@ -87,7 +88,7 @@ async function compare(){
 $('compareBtn').addEventListener('click',compare);
 
 $('demoBtn').addEventListener('click',async()=>{
-  state.files=[null,null];state.docs=demoDocuments();state.pages=[0,0];state.regions=[null,null];
+  state.docs.forEach(d=>d?.dispose?.());state.files=[null,null];state.docs=demoDocuments();state.pages=[0,0];state.regions=[null,null];
   $('fileNameA').textContent='점검표_원본.xlsx (예제)';$('fileNameB').textContent='점검표_수정.hwpx (예제)';
   $('fileMetaA').textContent='가상 문서 · 로컬 시연';$('fileMetaB').textContent='가상 문서 · 로컬 시연';
   document.querySelector('input[name="mode"][value="precision"]').checked=true;
@@ -105,8 +106,8 @@ async function showPage(i,index){
   await renderPage(doc,index,canvas,targetWidth);
   if(token!==state.renderSeq[i])return;
   shell.style.width=`${targetWidth}px`;canvas.style.width='100%';canvas.style.height='auto';
-  $('paneTitle'+side).textContent=ftext(doc.name,24);$(`pageInfo${side}`).textContent=`${doc.type==='hwpx'?'추출 ':''}${index+1} / ${doc.pages.length}`;
-  const notice=$(`notice${side}`);notice.classList.toggle('hidden',doc.type!=='hwpx');notice.textContent=doc.type==='hwpx'?'본문 추출 보기 · 원본 배치·쪽수와 다름 · 댓글 제외 · 원본 화면 비교는 PDF로 저장 후 이용':'';
+  $('paneTitle'+side).textContent=ftext(doc.name,24);$(`pageInfo${side}`).textContent=`${doc.type==='hwpx'&&doc.preview!=='hwp-layout'?'추출 ':''}${index+1} / ${doc.pages.length}`;
+  const notice=$(`notice${side}`);notice.classList.toggle('hidden',!['hwp','hwpx'].includes(doc.type));notice.textContent=doc.preview==='hwp-layout'?'한글 페이지 보기 · 일부 글꼴·개체·페이지 나눔은 한컴과 다를 수 있음':doc.type==='hwpx'?'본문 추출 보기 · 원본 배치·쪽수와 다름 · 댓글 제외 · 원본 화면 비교는 PDF로 저장 후 이용':'';
   repaintOverlays(i);refreshSelection(i);
 }
 
@@ -148,7 +149,7 @@ for(let i=0;i<2;i++){
 
 function setScopeVisibility(){const s=scope();$('rangeInputs').classList.toggle('hidden',s!=='pages');$('scopeHint').classList.toggle('hidden',s!=='region');}
 document.querySelectorAll('input[name="scope"]').forEach(r=>r.addEventListener('change',setScopeVisibility));
-const hints={fast:'글자·숫자 중심 비교. 서식·화면 차이는 검사하지 않습니다.',precision:'내용과 가용 서식을 비교합니다. PDF끼리는 화면도 보조 검사합니다. HWPX 댓글은 제외합니다.',visual:'PDF는 원본 화면을 검사합니다. HWPX가 포함되면 본문 비교로 전환하며 원본 배치·픽셀은 검사하지 않습니다. Excel끼리는 행 정렬 후 내용·가용 서식을 검사합니다.'};
+const hints={fast:'글자·숫자 중심 비교. 서식·화면 차이는 검사하지 않습니다.',precision:'내용과 가용 서식을 비교합니다. PDF·한글 페이지는 화면도 보조 검사합니다. 한글 댓글은 제외합니다.',visual:'PDF·한글 페이지의 화면 차이를 검사합니다. 한글과 PDF 등 서로 다른 렌더러의 차이는 확인 필요로 표시합니다. Excel끼리는 행 정렬 후 내용·가용 서식을 검사합니다.'};
 document.querySelectorAll('input[name="mode"]').forEach(r=>r.addEventListener('change',()=>{$('modeHint').textContent=hints[mode()];}));
 
 const filterDiffs=()=>state.diffs.map((d,i)=>({...d,index:i})).filter(d=>state.filter==='all'||d.type===state.filter).filter(d=>$('showReview').checked||d.type!=='review');
@@ -162,7 +163,7 @@ function renderResults(){
   for(const d of visible){
     const card=document.createElement('div');card.className=`result ${d.index===state.active?'current':''}`;card.tabIndex=0;card.setAttribute('role','button');
     const symbol={changed:'≠',added:'+',removed:'−',review:'?'}[d.type],labels={changed:'수정',added:'추가',removed:'삭제',review:'확인 필요'};
-    const location=(r,i)=>r?.page!=null?`${i?'수정본':'원본'} ${state.docs[i]?.type==='hwpx'?`추출 ${r.page+1}구간 · ${r.label||''}`:`${r.page+1}쪽`}`:`${i?'수정본':'원본'} 없음`;
+    const location=(r,i)=>r?.page!=null?`${i?'수정본':'원본'} ${state.docs[i]?.type==='hwpx'&&state.docs[i]?.preview!=='hwp-layout'?`추출 ${r.page+1}구간 · ${r.label||''}`:`${r.page+1}쪽`}`:`${i?'수정본':'원본'} 없음`;
     const a=location(d.left,0),b=location(d.right,1);
     card.innerHTML=`<span class="result-icon ${d.type}">${symbol}</span><div class="result-content"><strong>#${d.index+1} ${labels[d.type]} · ${escapeHtml(d.detail)}</strong><p>${escapeHtml(ftext(d.oldText,110))} <b>→</b> ${escapeHtml(ftext(d.newText,110))}</p><span class="result-meta">${a} / ${b} · ${escapeHtml(d.category)}${d.confidence!=='certain'?' · 추정':''}</span></div>`;
     if(d.members){const details=document.createElement('details');details.className='cell-details';details.innerHTML=`<summary>셀별 상세 ${d.members.length}개</summary>${d.members.map(m=>{const r=m.right||m.left;return `<p><b>${escapeHtml(r.meta.sheet)} · ${r.meta.row}행 ${r.meta.col}열</b><br>${escapeHtml(m.oldText)} → ${escapeHtml(m.newText)}<br>${escapeHtml(m.detail)}</p>`;}).join('')}`;details.addEventListener('click',e=>e.stopPropagation());card.querySelector('.result-content').appendChild(details);}
@@ -191,12 +192,12 @@ $('showReview').addEventListener('change',renderResults);
 $('groupCells').addEventListener('change',()=>{const current=state.diffs[state.active],id=current?.members?.[0]?.id||current?.id;state.diffs=$('groupCells').checked?groupChanges(state.rawDiffs):state.rawDiffs;const index=state.diffs.findIndex(d=>d.id===id||d.members?.some(m=>m.id===id));state.active=index;renderResults();if(index>=0)selectDiff(index);});
 
 $('exportBtn').addEventListener('click',()=>{
-  const output={app:'문서 비교실 v0.4',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
+  const output={app:'문서 비교실 v0.5',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
   const blob=new Blob([JSON.stringify(output,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`document-diff-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 
 $('clearBtn').addEventListener('click',()=>{
-  state.files=[null,null];state.docs=[null,null];state.rawDiffs=[];state.diffs=[];state.active=-1;state.selectionSeq++;state.pages=[0,0];state.regions=[null,null];
+  state.docs.forEach(d=>d?.dispose?.());state.files=[null,null];state.docs=[null,null];state.rawDiffs=[];state.diffs=[];state.active=-1;state.selectionSeq++;state.pages=[0,0];state.regions=[null,null];
   for(const side of ['A','B']){$(`file${side}`).value='';$(`fileName${side}`).textContent=side==='A'?'원본 파일 선택':'수정 파일 선택';$(`fileMeta${side}`).textContent='클릭하거나 끌어놓기';$(`shell${side}`).style.display='none';$(`empty${side}`).classList.remove('hidden');$(`paneTitle${side}`).textContent=side==='A'?'원본 문서':'수정 문서';$(`pageInfo${side}`).textContent='— / —';}
   for(const side of ['A','B'])$(`notice${side}`).classList.add('hidden');
   $('exportBtn').disabled=true;setStatus('초기화했습니다. 파일을 선택하세요.');renderResults();
