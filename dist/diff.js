@@ -21,11 +21,11 @@ export function parsePageRanges(s,total){
 
 const matchesScope=(r,set,region)=>set.has(r.page)&&(!region||r.page===region.page&&overlap(r.rect,region.rect));
 const isSame=(a,b,ignoreSpace)=>norm(a,ignoreSpace)===norm(b,ignoreSpace);
-function styleChanges(a,b){
+function styleChanges(a,b,compareTextRanges=true){
   if(!a||!b)return[];
   const out=[];
-  for(const key of ['font','size','bold','italic','color','fill','numFmtId','rowHeight','underline','strike','alignment','numberFormat','borderColor'])if(a[key]!=null&&b[key]!=null&&stable(a[key])!==stable(b[key]))out.push(key);
-  if(!out.length&&a.textStyles&&b.textStyles&&stable(a.textStyles)!==stable(b.textStyles))out.push('부분 글자 서식');
+  for(const key of ['font','size','bold','italic','color','fill','numFmtId','rowHeight','underline','strike','alignment','numberFormat','borderColor','cellFill','cellBorders','cellSize','cellMargins','cellAlignment','cellSpan','cellOptions','paragraphFormat','tableFormat','pageFormat','emptyTextFormat'])if(a[key]!=null&&b[key]!=null&&stable(a[key])!==stable(b[key]))out.push(key);
+  if(compareTextRanges&&!out.some(k=>['font','size','bold','italic','color','underline','strike'].includes(k))&&a.textStyles&&b.textStyles&&stable(a.textStyles)!==stable(b.textStyles))out.push('textStyles');
   if(a.border&&b.border)for(const side of ['left','right','top','bottom'])if(a.border[side]!==b.border[side])out.push(`${side} 테두리`);
   return out;
 }
@@ -42,9 +42,14 @@ function mappedFormula(formula,rowMap){
  return String(formula).split(/("(?:[^"]|"")*"|'(?:[^']|'')*')/).map((part,i)=>i%2?part:part.replace(/(?<![A-Za-z0-9_!])(\$?[A-Za-z]{1,3})(\$?)([1-9]\d*)\b(?!\s*\()/g,(match,col,dollar,row)=>col+dollar+(rowMap.get(Number(row))??row))).join('');
 }
 function comparePair(a,b,options){
-  if(!isSame(a.text,b.text,options.ignoreSpace))return mk('changed','content',a,b,'내용이 변경되었습니다.');
-  if(options.mode==='precision'&&a.style&&b.style&&a.role===b.role){
-    const changed=styleChanges(a.style,b.style);if(changed.length)return mk('changed','format',a,b,`${changed.map(k=>k==='color'?`글자색 (${a.style.color} → ${b.style.color})`:k).join(', ')} 서식 변경`);
+  const textChanged=!isSame(a.text,b.text,options.ignoreSpace),changed=options.mode==='precision'&&a.style&&b.style&&a.role===b.role?styleChanges(a.style,b.style,!textChanged):[];
+  if(textChanged||changed.length){
+    const names={cellFill:'셀 배경색·음영',cellBorders:'셀 테두리·대각선',cellSize:'셀 너비·높이',cellMargins:'셀 안쪽 여백',cellAlignment:'셀 세로 정렬·글자 방향',cellSpan:'셀 병합',cellOptions:'셀 속성',paragraphFormat:'문단 정렬·줄간격·여백',tableFormat:'표 배치·크기·반복 머리행·서식',pageFormat:'용지·페이지 여백',emptyTextFormat:'빈 셀 글자 서식',textStyles:'부분 글자 서식'};
+    const fillName=s=>s?.fillColor||s?.color||(s?.type==='none'?'없음':s?.fillType||s?.type||'없음');
+    const format=changed.map(k=>k==='color'?`글자색 (${a.style.color} → ${b.style.color})`:k==='cellFill'?`${names[k]} (${fillName(a.style[k])} → ${fillName(b.style[k])})`:names[k]||k).join(', ');
+    const diff=mk('changed',textChanged?'content':a.role==='page-format'?'page-format':'format',a,b,textChanged?`내용이 변경되었습니다.${format?' 함께 변경된 서식: '+format:''}`:`${format} 서식 변경`);
+    if(changed.length)diff.formatChanges=changed.map(property=>({property,before:a.style[property],after:b.style[property]}));
+    return diff;
   }
   if(a.meta?.formula!=null&&b.meta?.formula!=null&&options.mode!=='fast'&&mappedFormula(a.meta.formula,options.rowMap)!==b.meta.formula)return mk(a.meta.formula.includes('!')||b.meta.formula.includes('!')?'review':'changed','formula',{...a,text:a.meta.formula?'='+a.meta.formula:a.text},{...b,text:b.meta.formula?'='+b.meta.formula:b.text},a.meta.formula.includes('!')||b.meta.formula.includes('!')?'다른 시트 참조를 포함하는 수식 변경입니다. 자동 참조 조정 여부를 확인하세요.':'행 이동을 반영해도 수식 자체가 변경됐습니다.',a.meta.formula.includes('!')||b.meta.formula.includes('!')?'uncertain':'certain');
   return null;
@@ -71,6 +76,9 @@ function compareWorkbook(a,b,ra,rb,options){
 
 function compareRecords(ra,rb,options){
   const out=[],usedL=new Set(),usedR=new Set();
+  const objects=records=>{const map=new Map();records.forEach((r,i)=>{const key=r.meta?.sourceObjectKey;if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(i);});return map;};
+  const objectL=objects(ra),objectR=objects(rb);
+  for(const [key,left] of objectL){const right=objectR.get(key);if(left.length!==1||right?.length!==1)continue;const i=left[0],j=right[0];usedL.add(i);usedR.add(j);const diff=comparePair(ra[i],rb[j],options);if(diff)out.push(diff);}
   // HWPX preserves a table ID and the logical cell address, including merged
   // columns and empty cells. Use it only when both table shapes are unchanged.
   const sourceCells=records=>{const map=new Map();records.forEach((r,i)=>{const key=r.meta?.sourceCellKey||r.meta?.hwpxCellKey;if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(i);});return map;};
@@ -114,8 +122,9 @@ function compareRecords(ra,rb,options){
 
 export function contentDifferences(a,b,options){
   const pagesA=options.pagesA||new Set(a.pages.map((_,i)=>i)),pagesB=options.pagesB||new Set(b.pages.map((_,i)=>i));
-  const ra=a.records.filter(r=>matchesScope(r,pagesA,options.regionA));
-  const rb=b.records.filter(r=>matchesScope(r,pagesB,options.regionB));
+  const compareObjects=options.mode==='precision'&&[a,b].every(d=>d.preview==='hwp-layout');
+  const ra=a.records.filter(r=>(compareObjects||!r.meta?.sourceObjectKey)&&matchesScope(r,pagesA,options.regionA));
+  const rb=b.records.filter(r=>(compareObjects||!r.meta?.sourceObjectKey)&&matchesScope(r,pagesB,options.regionB));
   const diffs=a.type==='xlsx'&&b.type==='xlsx'?compareWorkbook(a,b,ra,rb,options):compareRecords(ra,rb,options);
   if(diffs.length>1800)diffs.splice(1799,diffs.length-1799,mk('review','limit',null,null,'차이가 1,800건을 초과하여 일부만 표시합니다. 비교 범위를 나누어 주세요.','uncertain'));
   return diffs.map((d,i)=>({...d,id:`text-${i}`}));
@@ -123,20 +132,33 @@ export function contentDifferences(a,b,options){
 
 function newCanvas(){return document.createElement('canvas');}
 async function pixels(doc,index){
-  const {renderPage}=await import('./readers.js?v=20261028-5');
+  const {renderPage}=await import('./readers.js?v=20261028-6');
   const source=newCanvas();await renderPage(doc,index,source,550);
   const canvas=newCanvas();canvas.width=420;canvas.height=570;
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.fillStyle='white';ctx.fillRect(0,0,420,570);
   const s=Math.min(420/source.width,570/source.height),w=source.width*s,h=source.height*s;
   ctx.drawImage(source,(420-w)/2,0,w,h);
-  return ctx.getImageData(0,0,420,570).data;
+  return {data:ctx.getImageData(0,0,420,570).data,frame:{x:(420-w)/2,y:0,w,h}};
 }
-function tileRegions(A,B){
+export function maskKnownPixels(A,B,changes,page,docs,frames){
+  const result=new Uint8ClampedArray(B);
+  for(const d of changes||[]){if(d.confidence!=='certain')continue;
+    for(let side=0;side<2;side++){const r=side===0?d.left:d.right;if(!r?.rect||r.page!==page||!['cell','paragraph'].includes(r.role))continue;
+      const pg=docs[side].pages[page],f=frames[side],box=r.rect;
+      const x0=Math.max(0,Math.floor(f.x+box.x/pg.width*f.w)-2),y0=Math.max(0,Math.floor(f.y+box.y/pg.height*f.h)-2),x1=Math.min(420,Math.ceil(f.x+(box.x+box.w)/pg.width*f.w)+2),y1=Math.min(570,Math.ceil(f.y+(box.y+box.h)/pg.height*f.h)+2);
+      for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){const k=(y*420+x)*4;result[k]=A[k];result[k+1]=A[k+1];result[k+2]=A[k+2];}
+    }
+  }
+  return result;
+}
+export function tileRegions(A,B){
   const tile=30,cols=14,rows=19,active=[];
   for(let cy=0;cy<rows;cy++)for(let cx=0;cx<cols;cx++){
-    let count=0,total=0;
-    for(let y=cy*tile;y<(cy+1)*tile;y+=2)for(let x=cx*tile;x<(cx+1)*tile;x+=2){const k=(y*420+x)*4;const delta=(Math.abs(A[k]-B[k])+Math.abs(A[k+1]-B[k+1])+Math.abs(A[k+2]-B[k+2]))/3;total++;if(delta>38)count++;}
-    if(count/total>.035)active.push([cx,cy]);
+    let count=0,total=0,light=0,dark=0,sum=0;
+    for(let y=cy*tile;y<(cy+1)*tile;y+=2)for(let x=cx*tile;x<(cx+1)*tile;x+=2){const k=(y*420+x)*4,dr=B[k]-A[k],dg=B[k+1]-A[k+1],db=B[k+2]-A[k+2];const delta=(Math.abs(dr)+Math.abs(dg)+Math.abs(db))/3,luma=(dr+dg+db)/3;total++;sum+=delta;if(delta>38)count++;if(luma>=5)light++;if(luma<=-5)dark++;}
+    // A broad coherent shade change is meaningful even when it is much lighter
+    // than the text/edge threshold. Sparse antialiasing noise does not qualify.
+    if(count/total>.035||Math.max(light,dark)/total>.65&&sum/total>=5)active.push([cx,cy]);
   }
   const set=new Set(active.map(p=>p.join(','))),regions=[];
   while(set.size){const seed=set.values().next().value;set.delete(seed);const todo=[seed.split(',').map(Number)],group=[];
@@ -146,6 +168,17 @@ function tileRegions(A,B){
   return regions.sort((a,b)=>b.tiles-a.tiles).slice(0,10);
 }
 
+export function unexplainedVisualDifferences(visual,structure){
+  const covered=(area,side)=>{
+    if(!area?.rect)return false;
+    const box=area.rect,rects=structure.map(d=>d[side]).filter(r=>r?.page===area.page&&r.rect&&!['table-format','page-format'].includes(r.role)).map(r=>({x:Math.max(box.x,r.rect.x),y:Math.max(box.y,r.rect.y),right:Math.min(box.x+box.w,r.rect.x+r.rect.w),bottom:Math.min(box.y+box.h,r.rect.y+r.rect.h)})).filter(r=>r.right>r.x&&r.bottom>r.y);
+    const edges=[...new Set(rects.flatMap(r=>[r.x,r.right]))].sort((a,b)=>a-b);let total=0;
+    for(let i=1;i<edges.length;i++){const left=edges[i-1],right=edges[i],spans=rects.filter(r=>r.x<right&&r.right>left).map(r=>[r.y,r.bottom]).sort((a,b)=>a[0]-b[0]);let top=0,bottom=0,height=0;for(const [y,end] of spans){if(y>bottom){height+=bottom-top;top=y;bottom=end;}else bottom=Math.max(bottom,end);}height+=bottom-top;total+=(right-left)*height;}
+    return total>=box.w*box.h*.85;
+  };
+  return visual.filter(v=>!covered(v.left,'left')&&!covered(v.right,'right'));
+}
+
 export async function visualDifferences(a,b,options,onProgress=()=>{}){
   if([a,b].some(d=>['hwp','hwpx'].includes(d.type)&&d.preview!=='hwp-layout')){onProgress(0,'본문 추출 문서는 화면 비교를 생략');const out=contentDifferences(a,b,{...options,mode:'precision'});onProgress(1,'HWPX 본문 검사 완료');return out.map(d=>({...d,detail:d.detail+' (HWPX 본문 비교; 원본 배치·픽셀 검사 제외)'}));}
   if(a.type==='xlsx'&&b.type==='xlsx'){onProgress(0,'행 대응을 맞춘 뒤 내용·서식 검사');await new Promise(resolve=>setTimeout(resolve,0));const out=contentDifferences(a,b,{...options,mode:'precision'});onProgress(1,'엑셀 행 정렬 후 검사 완료');return out.map(d=>({...d,detail:d.detail+' (행 정렬 적용; 엑셀 화면은 구조 기반 미리보기)'}));}
@@ -153,10 +186,11 @@ export async function visualDifferences(a,b,options,onProgress=()=>{}){
   const scopeA=options.pagesA||new Set(a.pages.map((_,i)=>i)),scopeB=options.pagesB||new Set(b.pages.map((_,i)=>i));
   for(let i=0;i<n;i++){
     if(!scopeA.has(i)||!scopeB.has(i))continue;
-    const pa=await pixels(a,i),pb=await pixels(b,i),regions=tileRegions(pa,pb);
+    const pa=await pixels(a,i),pb=await pixels(b,i),right=options.knownDifferences?maskKnownPixels(pa.data,pb.data,options.knownDifferences,i,[a,b],[pa.frame,pb.frame]):pb.data,regions=tileRegions(pa.data,right);
     for(const region of regions){
-      const left={page:i,rect:{x:region.x/420*a.pages[i].width,y:region.y/570*a.pages[i].height,w:region.w/420*a.pages[i].width,h:region.h/570*a.pages[i].height},text:`${i+1}페이지 화면 영역`};
-      const right={page:i,rect:{x:region.x/420*b.pages[i].width,y:region.y/570*b.pages[i].height,w:region.w/420*b.pages[i].width,h:region.h/570*b.pages[i].height},text:`${i+1}페이지 화면 영역`};
+      const sourceRect=(pg,f)=>{const x=Math.max(0,(region.x-f.x)/f.w*pg.width),y=Math.max(0,(region.y-f.y)/f.h*pg.height);return {x,y,w:Math.max(2,Math.min(pg.width-x,region.w/f.w*pg.width)),h:Math.max(2,Math.min(pg.height-y,region.h/f.h*pg.height))};};
+      const left={page:i,rect:sourceRect(a.pages[i],pa.frame),text:`${i+1}페이지 화면 영역`};
+      const right={page:i,rect:sourceRect(b.pages[i],pb.frame),text:`${i+1}페이지 화면 영역`};
       const intersectsA=!options.regionA||options.regionA.page===i&&overlap(left.rect,options.regionA.rect);
       const intersectsB=!options.regionB||options.regionB.page===i&&overlap(right.rect,options.regionB.rect);
       if(intersectsA&&intersectsB)out.push({...mk(a.type===b.type?'changed':'review','visual',left,right,`렌더링 영역 ${region.tiles}칸에서 차이가 발견됐습니다. ${a.type!==b.type?'서로 다른 형식의 배치 차이일 수 있습니다.':''}`,a.type===b.type?'probable':'uncertain'),id:`visual-${out.length}`});

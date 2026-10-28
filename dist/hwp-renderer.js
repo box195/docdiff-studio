@@ -1,4 +1,5 @@
 // Pinned MIT-licensed RHWP 0.8.7. Document bytes never leave this browser.
+import {styleReader,textStyleRanges} from './hwp-styles.js?v=20261028-6';
 let enginePromise;
 async function engine(){
   if(!enginePromise)enginePromise=(async()=>{
@@ -18,7 +19,7 @@ const union=rects=>{const r={x:Math.min(...rects.map(r=>r.x)),y:Math.min(...rect
 const pathKey=path=>path.map(p=>`${p.controlIndex}:${p.cellIndex}`).join('/');
 const normalized=s=>String(s??'').replace(/\r\n?/g,'\n');
 
-export function layoutRecords(native,pageIndex,info,layout){
+export function layoutRecords(native,pageIndex,info,layout,inspection={reader:styleReader(native),seen:new Set()}){
   const scale=800/info.width,groups=new Map(),tables=new Map();
   const tableFor=run=>{
     const key=`${run.secIdx}:${run.parentParaIdx}:${run.controlIdx}`;
@@ -58,14 +59,20 @@ export function layoutRecords(native,pageIndex,info,layout){
     let cellInfo=box;
     if(group.inCell&&!cellInfo&&first)cellInfo=parse(native.getCellInfoByPath(first.secIdx,first.parentParaIdx,JSON.stringify(first.cellPath)));
     const col=(cellInfo?.col??0)+1,row=(cellInfo?.row??0)+1;
-    const styles=runs.filter(r=>r.text?.length).map(r=>({font:r.fontFamily,size:r.fontSize,bold:r.bold,italic:r.italic,underline:r.underline,strike:r.strikethrough,color:r.textColor}));
-    const distinctStyles=styles.filter((s,i)=>!i||JSON.stringify(s)!==JSON.stringify(styles[i-1]));
-    const style=distinctStyles.length?{...distinctStyles[0],textStyles:distinctStyles}:null;
-    const meta=group.inCell?{sourceCellKey:group.source,tableShape:group.table.shape,sourceTableKey:group.table.key,tableRow:row,col,rowKey:''}:{};
+    const ranges=textStyleRanges(runs,inspection.reader),primary=ranges[0]?.style;
+    const style={...(primary||{}),textStyles:ranges,paragraphFormat:inspection.reader.paragraphs(runs,group.inCell)};
+    if(group.inCell&&!ranges.length&&first)style.emptyTextFormat=inspection.reader.characters(first);
+    if(group.inCell){const [sec,parent,control]=group.table.key.split(':').map(Number),index=first?.cellIdx??box?.cellIdx;Object.assign(style,inspection.reader.cell(sec,parent,control,index,first?.cellPath,cellInfo));}
+    const meta=group.inCell?{sourceCellKey:group.source,tableShape:group.table.shape,sourceTableKey:group.table.key,tableRow:row,col,colSpan:cellInfo?.colSpan||1,rowSpan:cellInfo?.rowSpan||1,rowKey:''}:{};
     output.push({id:`hwp-${pageIndex}-${output.length}`,role:group.inCell?'cell':'paragraph',text,page:pageIndex,rect,style,source:'hwp-layout',meta,label:group.inCell?`표 · ${row}행 ${col}열`:`${pageIndex+1}페이지 본문`});
   }
   const rowKeys=new Map();for(const r of output.filter(r=>r.role==='cell').sort((a,b)=>a.meta.col-b.meta.col)){const key=`${r.meta.sourceTableKey}:${r.meta.tableRow}`;if(!rowKeys.has(key))rowKeys.set(key,r.text);}
   for(const r of output)if(r.role==='cell')r.meta.rowKey=rowKeys.get(`${r.meta.sourceTableKey}:${r.meta.tableRow}`)||'';
+  for(const table of tables.values()){
+    if(inspection.seen.has(table.key))continue;inspection.seen.add(table.key);
+    const [sec,parent,control]=table.key.split(':').map(Number),properties=inspection.reader.table(sec,parent,control),bounds=table.bounds.filter(b=>b.pageIndex===pageIndex);
+    if(properties&&bounds.length)output.push({id:`hwp-table-${table.key}`,role:'table-format',text:'표 설정',page:pageIndex,rect:Object.fromEntries(Object.entries(union(bounds)).map(([k,v])=>[k,v*scale])),style:{tableFormat:{...properties,dimensions:parse(table.shape)}},meta:{sourceObjectKey:`table:${table.key}`},source:'hwp-layout',label:'표 전체 설정'});
+  }
   return output.sort((a,b)=>a.rect.y-b.rect.y||a.rect.x-b.rect.x);
 }
 
@@ -77,12 +84,16 @@ export async function readHwpPages(file,onProgress=()=>{}){
     native=new HwpDocument(new Uint8Array(await file.arrayBuffer()));
     const count=native.pageCount();if(!count||count>300)throw Error('한글 문서는 1~300페이지까지 지원합니다.');
     const doc={name:file.name.split(/[\\/]/).pop(),type:file.name.toLowerCase().endsWith('.hwpx')?'hwpx':'hwp',preview:'hwp-layout',pages:[],records:[],warnings:['한글 페이지 엔진으로 표·글꼴·여백을 재현합니다. 한컴 자체 엔진이 아니므로 미설치 글꼴·일부 개체·페이지 나눔은 다를 수 있습니다. 댓글은 본문 비교에서 제외합니다.'],hwp:native,svgCache:new Map()};
+    const inspection={reader:styleReader(native),seen:new Set()},sections=new Set();
     for(let i=0;i<count;i++){
       const info=parse(native.getPageInfo(i)),layout=parse(native.getPageTextLayout(i));if(!info.width||!info.height)throw Error('한글 페이지 크기를 읽지 못했습니다.');
       doc.pages.push({title:`한글 ${i+1}페이지`,kind:'hwp-layout',width:800,height:800*info.height/info.width,sourceWidth:info.width,sourceHeight:info.height});
-      doc.records.push(...layoutRecords(native,i,info,layout));onProgress((i+1)/count*.85,`${i+1}/${count}페이지 · 원본 배치 분석`);
+      doc.records.push(...layoutRecords(native,i,info,layout,inspection));
+      if(!sections.has(info.sectionIndex)){sections.add(info.sectionIndex);const properties=inspection.reader.page(info.sectionIndex);if(properties)doc.records.push({id:`hwp-section-${info.sectionIndex}`,role:'page-format',text:'페이지 설정',page:i,rect:{x:20,y:20,w:760,h:30},style:{pageFormat:properties},meta:{sourceObjectKey:`section:${info.sectionIndex}`},source:'hwp-layout',label:`구역 ${info.sectionIndex+1} 용지·여백`});}
+      onProgress((i+1)/count*.85,`${i+1}/${count}페이지 · 본문·셀 색상·테두리·서식 분석`);
       if(i%3===0)await new Promise(resolve=>setTimeout(resolve,0));
     }
+    if(inspection.reader.missing.size)doc.warnings.push('일부 개체의 서식을 읽지 못했습니다. 중첩 표·특수 개체는 화면과 함께 확인하세요.');
     doc.dispose=()=>{if(doc.hwp){doc.hwp.free();doc.hwp=null;doc.svgCache.clear();}};
     return doc;
   }catch(error){native?.free();throw Error(`한글 페이지를 열지 못했습니다: ${error.message||error} 암호·손상·미지원 문서는 한글에서 PDF로 저장해 비교하세요.`);}

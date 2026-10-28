@@ -1,4 +1,5 @@
 // Group only adjacent, confidently matched spreadsheet cells; retain every member.
+import {groupHwpFormats} from './hwp-grouping.js?v=20261028-6';
 const cell = r => r?.role === 'cell' && r.meta?.sheet && Number.isInteger(r.meta.row) && Number.isInteger(r.meta.col);
 function groupKey(d) {
   if (d.confidence !== 'certain' || !['content','format'].includes(d.category) || d.type === 'review') return null;
@@ -18,6 +19,7 @@ function mergeRecord(members,side) {
   return {...first,rect,text:records.map(r=>`${column(r.meta.col)}${r.meta.row}: ${r.text}`).join(' | ')};
 }
 export function groupChanges(diffs) {
+  diffs=groupHwpFormats(diffs);
   const buckets=new Map(),groups=[];
   diffs.forEach((d,index)=>{const key=groupKey(d);if(key===null){groups.push({index,diff:d});return;}if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push({d,index});});
   for(const bucket of buckets.values()){

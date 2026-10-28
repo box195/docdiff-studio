@@ -1,6 +1,6 @@
-import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261028-5';
-import {contentDifferences,visualDifferences,parsePageRanges,summarize} from './diff.js?v=20261028-5';
-import {groupChanges,navigationDirection,revealInList} from './review-navigation.js';
+import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261028-6';
+import {contentDifferences,visualDifferences,parsePageRanges,summarize,unexplainedVisualDifferences} from './diff.js?v=20261028-6';
+import {groupChanges,navigationDirection,revealInList} from './review-navigation.js?v=20261028-6';
 
 const $=id=>document.getElementById(id);
 const state={files:[null,null],docs:[null,null],pages:[0,0],regions:[null,null],rawDiffs:[],diffs:[],active:-1,filter:'all',busy:false,renderSeq:[0,0],selectionSeq:0,lastOptions:null};
@@ -58,7 +58,7 @@ async function ensureDocuments(){
 
 function backgroundCompare(a,b,options){
  if(typeof Worker==='undefined')return Promise.resolve(contentDifferences(a,b,options));
- return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261028-5',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
+ return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261028-6',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
 }
 async function compare(){
   if(state.busy)return;state.busy=true;$('compareBtn').disabled=true;
@@ -69,11 +69,9 @@ async function compare(){
     const structuredOnly=state.docs.every(d=>d.type==='xlsx')||state.docs.some(d=>['hwp','hwpx'].includes(d.type)&&d.preview!=='hwp-layout');let diffs=opts.mode==='visual'&&!structuredOnly?[]:await backgroundCompare(state.docs[0],state.docs[1],{...opts,mode:opts.mode==='visual'?'precision':opts.mode});
     const visualRequested=!structuredOnly&&(opts.mode==='visual'||(opts.mode==='precision'&&$('visualExtra').checked&&state.docs.every(d=>d.type==='pdf'||d.preview==='hwp-layout')));
     if(visualRequested){
-      const visual=await visualDifferences(state.docs[0],state.docs[1],opts,(p,m)=>progress(.82+p*.17,m));
+      const visual=await visualDifferences(state.docs[0],state.docs[1],{...opts,knownDifferences:opts.mode==='precision'?diffs:undefined},(p,m)=>progress(.82+p*.17,m));
       if(opts.mode==='precision'){
-        // A visual region already explained by a text diff is not reported twice.
-        const overlaps=(a,b)=>a&&b&&a.page===b.page&&a.rect&&b.rect&&a.rect.x<b.rect.x+b.rect.w&&b.rect.x<a.rect.x+a.rect.w&&a.rect.y<b.rect.y+b.rect.h&&b.rect.y<a.rect.y+a.rect.h;
-        diffs.push(...visual.filter(v=>!diffs.some(d=>overlaps(v.left,d.left)||overlaps(v.right,d.right))));
+        diffs.push(...unexplainedVisualDifferences(visual,diffs));
       }else diffs=visual;
     }
     state.rawDiffs=diffs;state.diffs=$('groupCells').checked?groupChanges(diffs):diffs;state.active=state.diffs.length?0:-1;state.filter='all';document.querySelectorAll('.filter').forEach(btn=>btn.classList.toggle('active',btn.dataset.filter==='all'));
@@ -149,13 +147,13 @@ for(let i=0;i<2;i++){
 
 function setScopeVisibility(){const s=scope();$('rangeInputs').classList.toggle('hidden',s!=='pages');$('scopeHint').classList.toggle('hidden',s!=='region');}
 document.querySelectorAll('input[name="scope"]').forEach(r=>r.addEventListener('change',setScopeVisibility));
-const hints={fast:'글자·숫자 중심 비교. 서식·화면 차이는 검사하지 않습니다.',precision:'내용과 가용 서식을 비교합니다. PDF·한글 페이지는 화면도 보조 검사합니다. 한글 댓글은 제외합니다.',visual:'PDF·한글 페이지의 화면 차이를 검사합니다. 한글과 PDF 등 서로 다른 렌더러의 차이는 확인 필요로 표시합니다. Excel끼리는 행 정렬 후 내용·가용 서식을 검사합니다.'};
+const hints={fast:'글자·숫자 중심 비교. 서식·화면 차이는 검사하지 않습니다.',precision:'셀 배경색·음영·테두리·글자·문단 서식을 비교하고 페이지 화면도 보조 검사합니다. 한글 댓글은 제외합니다.',visual:'PDF·한글 페이지의 화면 차이를 검사합니다. 한글과 PDF 등 서로 다른 렌더러의 차이는 확인 필요로 표시합니다. Excel끼리는 행 정렬 후 내용·가용 서식을 검사합니다.'};
 document.querySelectorAll('input[name="mode"]').forEach(r=>r.addEventListener('change',()=>{$('modeHint').textContent=hints[mode()];}));
 
 const filterDiffs=()=>state.diffs.map((d,i)=>({...d,index:i})).filter(d=>state.filter==='all'||d.type===state.filter).filter(d=>$('showReview').checked||d.type!=='review');
 function renderResults(){
   const visible=filterDiffs(),counts=summarize(state.diffs);
-  $('resultCount').textContent=visible.length;$('changeCounter').textContent=state.diffs.length?`전체 ${state.diffs.length}건 · 선택 ${Math.max(0,visible.findIndex(d=>d.index===state.active)+1)}/${visible.length}${state.rawDiffs.length>state.diffs.length?` · 셀별 ${state.rawDiffs.length}건`:''}`:'차이점 없음';
+  $('resultCount').textContent=visible.length;$('changeCounter').textContent=state.diffs.length?`전체 ${state.diffs.length}건 · 선택 ${Math.max(0,visible.findIndex(d=>d.index===state.active)+1)}/${visible.length}${state.rawDiffs.length>state.diffs.length?` · 세부 ${state.rawDiffs.length}건`:''}`:'차이점 없음';
   $('summaryChips').innerHTML=`<span>수정 ${counts.changed||0}</span><span>추가 ${counts.added||0}</span><span>삭제 ${counts.removed||0}</span><span>확인 ${counts.review||0}</span>`;
   $('prevBtn').disabled=$('nextBtn').disabled=!visible.length;$('exportBtn').disabled=!state.diffs.length;
   const list=$('resultsList');list.replaceChildren();
@@ -166,7 +164,7 @@ function renderResults(){
     const location=(r,i)=>r?.page!=null?`${i?'수정본':'원본'} ${state.docs[i]?.type==='hwpx'&&state.docs[i]?.preview!=='hwp-layout'?`추출 ${r.page+1}구간 · ${r.label||''}`:`${r.page+1}쪽`}`:`${i?'수정본':'원본'} 없음`;
     const a=location(d.left,0),b=location(d.right,1);
     card.innerHTML=`<span class="result-icon ${d.type}">${symbol}</span><div class="result-content"><strong>#${d.index+1} ${labels[d.type]} · ${escapeHtml(d.detail)}</strong><p>${escapeHtml(ftext(d.oldText,110))} <b>→</b> ${escapeHtml(ftext(d.newText,110))}</p><span class="result-meta">${a} / ${b} · ${escapeHtml(d.category)}${d.confidence!=='certain'?' · 추정':''}</span></div>`;
-    if(d.members){const details=document.createElement('details');details.className='cell-details';details.innerHTML=`<summary>셀별 상세 ${d.members.length}개</summary>${d.members.map(m=>{const r=m.right||m.left;return `<p><b>${escapeHtml(r.meta.sheet)} · ${r.meta.row}행 ${r.meta.col}열</b><br>${escapeHtml(m.oldText)} → ${escapeHtml(m.newText)}<br>${escapeHtml(m.detail)}</p>`;}).join('')}`;details.addEventListener('click',e=>e.stopPropagation());card.querySelector('.result-content').appendChild(details);}
+    if(d.members){const details=document.createElement('details');details.className='cell-details';details.innerHTML=`<summary>셀별 상세 ${d.members.length}개</summary>${d.members.map(m=>{const r=m.right||m.left;return `<p><b>${escapeHtml(r.meta.sheet||'표')} · ${r.meta.row||r.meta.tableRow}행 ${r.meta.col}열</b><br>${escapeHtml(m.oldText)} → ${escapeHtml(m.newText)}<br>${escapeHtml(m.detail)}</p>`;}).join('')}`;details.addEventListener('click',e=>e.stopPropagation());card.querySelector('.result-content').appendChild(details);}
     card.addEventListener('click',()=>selectDiff(d.index));card.addEventListener('keydown',e=>{if(e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();selectDiff(d.index);}});list.appendChild(card);
   }
   repaintOverlays(0);repaintOverlays(1);
@@ -192,7 +190,7 @@ $('showReview').addEventListener('change',renderResults);
 $('groupCells').addEventListener('change',()=>{const current=state.diffs[state.active],id=current?.members?.[0]?.id||current?.id;state.diffs=$('groupCells').checked?groupChanges(state.rawDiffs):state.rawDiffs;const index=state.diffs.findIndex(d=>d.id===id||d.members?.some(m=>m.id===id));state.active=index;renderResults();if(index>=0)selectDiff(index);});
 
 $('exportBtn').addEventListener('click',()=>{
-  const output={app:'문서 비교실 v0.5',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
+  const output={app:'문서 비교실 v0.6',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
   const blob=new Blob([JSON.stringify(output,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`document-diff-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 

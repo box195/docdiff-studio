@@ -25,7 +25,7 @@ export async function readDocument(file,onProgress=()=>{},settings={}){
   if(file.size>80*1024*1024)throw new Error('첫 버전은 파일당 80MB까지 지원합니다.');
   const ext=file.name.split('.').pop().toLowerCase();
   if(['hwp','hwpx'].includes(ext)&&settings.hwpPreview!=='text'){
-    const {readHwpPages}=await import('./hwp-renderer.js?v=20261028-5');return readHwpPages(file,onProgress);
+    const {readHwpPages}=await import('./hwp-renderer.js?v=20261028-6');return readHwpPages(file,onProgress);
   }
   if(ext==='hwp')throw new Error('구형 HWP는 이 웹앱에서 직접 해석할 수 없습니다. 한글에서 HWPX 또는 PDF로 저장한 뒤 선택해 주세요.');
   if(ext==='pdf')return readPdf(file,onProgress);
@@ -200,7 +200,7 @@ async function readHwpx(file,zip,onProgress){
 export async function renderPage(doc,index,canvas,width=800){
   const pg=doc.pages[index];if(!pg)return;
   if(doc.preview==='hwp-layout'){
-    const {renderHwpPage}=await import('./hwp-renderer.js?v=20261028-5');await renderHwpPage(doc,index,canvas,width);
+    const {renderHwpPage}=await import('./hwp-renderer.js?v=20261028-6');await renderHwpPage(doc,index,canvas,width);
   }else if(doc.type==='pdf'){
     const pdfpage=await doc.pdf.getPage(index+1),base=pdfpage.getViewport({scale:1}),scale=width/base.width;
     const vp=pdfpage.getViewport({scale});canvas.width=Math.round(vp.width);canvas.height=Math.round(vp.height);
