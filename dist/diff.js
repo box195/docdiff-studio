@@ -1,5 +1,5 @@
 import {workbookRows,alignRows} from './row-alignment.js';
-import {alignPdfCells,pdfReviewRecord} from './pdf-alignment.js?v=20261029-9';
+import {alignPdfCells,pdfReviewRecord} from './pdf-alignment.js?v=20261029-12';
 
 const compact = s => String(s||'').trim().replace(/\s+/g,' ');
 const norm = (s,ignoreSpace) => ignoreSpace?String(s??'').replace(/\s+/g,''):String(s??'').replace(/\r\n/g,'\n');
@@ -86,6 +86,16 @@ function compareRecords(ra,rb,options){
     }
     for(const i of alignment.removed)if(ra[i].text.trim())out.push(mk('removed','content',ra[i],null,'대응하는 표·행이 삭제되어 원본에만 있습니다.'));
     for(const j of alignment.added)if(rb[j].text.trim())out.push(mk('added','content',null,rb[j],'대응 표에 새 행·셀이 추가되었습니다.'));
+    // A completely empty PDF row still has visible borders. Report it when
+    // its entire recognized row is gone, without inventing changes for blanks
+    // that remain in a matched row.
+    const blankRows=(records,indices)=>{
+      const missing=new Set(indices),groups=new Map();
+      records.forEach((r,i)=>{if(!r.meta?.pdfCell)return;const key=`${r.page}:${r.meta.pdfTableKey}:${r.meta.pdfRow}`;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(i);});
+      return [...groups.values()].filter(row=>row.every(i=>missing.has(i))&&row.every(i=>!records[i].text.trim())).map(row=>({...pdfReviewRecord(records,row),role:'cell',text:'(빈 행)',label:'빈 표 행'}));
+    };
+    for(const row of blankRows(ra,alignment.removed))out.push(mk('removed','row',row,null,'표에서 내용이 없는 행 전체가 삭제되었습니다.'));
+    for(const row of blankRows(rb,alignment.added))out.push(mk('added','row',null,row,'표에 내용이 없는 행 전체가 추가되었습니다.'));
     for(const r of alignment.reviews)out.push(mk('review','alignment',pdfReviewRecord(ra,r.left),pdfReviewRecord(rb,r.right),r.detail,'uncertain'));
   }
   const objects=records=>{const map=new Map();records.forEach((r,i)=>{const key=r.meta?.sourceObjectKey;if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(i);});return map;};

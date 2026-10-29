@@ -9,6 +9,54 @@ function table(rows,{x=20,y=20,page=0,prefix='T',shift=0}={}){
 }
 const document=records=>({type:'pdf',pages:[{width:800,height:1120}],records,warnings:[]});
 const compare=(a,b)=>contentDifferences(document(a),document(b),options);
+// PDF border recognition can split adjacent printed rows into independent tables.
+const splitRows=records=>records.map(r=>({...r,meta:{...r.meta,pdfTableKey:`row:${r.meta.pdfTableKey}:${r.meta.pdfRow}`,pdfRow:1}}));
+
+test('PDF 삭제된 한 행 아래의 개별 표 셀들은 이동한 원래 행과 대응한다',()=>{
+  const a=splitRows(table([['구분','값'],['A','10'],['B','20'],['C','30'],['D','40']]));
+  const b=splitRows(table([['구분','값'],['A','10'],['C','30'],['D','45']]));
+  const diffs=compare(a,b);
+  assert.equal(diffs.filter(d=>d.type==='removed').length,2);
+  assert.deepEqual(diffs.filter(d=>d.type==='removed').map(d=>d.oldText),['B','20']);
+  assert.equal(diffs.filter(d=>d.type==='changed').length,1);
+  assert.equal(diffs.find(d=>d.type==='changed').oldText,'40');
+  assert.equal(diffs.find(d=>d.type==='changed').newText,'45');
+  assert(!diffs.some(d=>d.type==='added'||d.type==='review'));
+});
+
+test('PDF 상단 행 삭제로 아래쪽 별도 표 전체가 이동해도 새 표로 오인하지 않는다',()=>{
+  const a=[...table([['제거','123']],{prefix:'old'}),...table([['구분','수량'],['장비','100']],{y:150,prefix:'next'})];
+  const b=table([['구분','수량'],['장비','100']],{y:126,prefix:'next'});
+  const diffs=compare(a,b);
+  assert.deepEqual(diffs.filter(d=>d.type==='removed').map(d=>d.oldText),['제거','123']);
+  assert(!diffs.some(d=>d.type==='added'||d.type==='changed'||d.type==='review'));
+});
+
+test('PDF 행 두 개 연속 삭제 뒤의 짧은 항목명들도 이전 행과 잘못 연결하지 않는다',()=>{
+  const a=splitRows(table([['A','1'],['B','2'],['C','3'],['D','4'],['E','5']]));
+  const b=splitRows(table([['A','1'],['D','4'],['E','5']]));
+  const diffs=compare(a,b);
+  assert.deepEqual(diffs.filter(d=>d.type==='removed').map(d=>d.oldText),['B','2','C','3']);
+  assert(!diffs.some(d=>d.type!=='removed'));
+});
+
+test('PDF 중간 행 삽입으로 아래 행들이 밀려도 변경은 삽입 행만 검출한다',()=>{
+  const a=splitRows(table([['A','1'],['B','2'],['C','3']]));
+  const b=splitRows(table([['A','1'],['X','9'],['B','2'],['C','3']]));
+  const diffs=compare(a,b);
+  assert.deepEqual(diffs.filter(d=>d.type==='added').map(d=>d.newText),['X','9']);
+  assert(!diffs.some(d=>d.type!=='added'));
+});
+
+test('PDF 내용이 전혀 없는 행이 삭제되면 행의 전체 테두리를 한 건으로 검출한다',()=>{
+  const a=table([['항목','값'],['',''],['정상','10']]);
+  const b=table([['항목','값'],['정상','10']]);
+  const diffs=compare(a,b);
+  assert.equal(diffs.length,1);
+  assert.equal(diffs[0].type,'removed');
+  assert.equal(diffs[0].category,'row');
+  assert.deepEqual(diffs[0].left.rect,{x:20,y:44,w:240,h:24});
+});
 
 test('PDF 다른 표의 빈칸/내용 삭제가 같은 위치의 완전 변경을 무효화하지 않음',()=>{
   const a=[...table([['설치장소','청계'],['기기명','기타설비'],['일시','2026-09-07']]),...table([['부품','금액'],['그래픽카드','150000']],{y:200,prefix:'parts'})];

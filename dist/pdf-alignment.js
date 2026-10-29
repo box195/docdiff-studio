@@ -7,13 +7,29 @@ const unique=items=>{const m=new Map();for(const [key,value] of items){if(!key)c
 
 export function alignPdfCells(left,right){
   const out={pairs:[],added:[],removed:[],reviews:[],consumedLeft:new Set(),consumedRight:new Set()};
-  const tables=records=>{const groups=new Map();records.forEach((r,i)=>{if(!r.meta?.pdfCell||!r.meta.pdfTableKey||!r.rect)return;const key=r.meta.pdfTableKey;if(!groups.has(key))groups.set(key,{indices:[],page:r.page});groups.get(key).indices.push(i);});return [...groups.values()].map(t=>({...t,bounds:bounds(t.indices.map(i=>records[i])),words:new Set(t.indices.map(i=>clean(records[i].text)).filter(s=>s.length>1))}));};
+  const tables=records=>{
+    const groups=new Map();
+    records.forEach((r,i)=>{if(!r.meta?.pdfCell||!r.meta.pdfTableKey||!r.rect)return;const key=r.meta.pdfTableKey;if(!groups.has(key))groups.set(key,{indices:[],page:r.page});groups.get(key).indices.push(i);});
+    return [...groups.values()].map(t=>{
+      const indices=t.indices.sort((i,j)=>records[i].rect.y-records[j].rect.y||records[i].rect.x-records[j].rect.x);
+      const box=bounds(indices.map(i=>records[i])),tokens=[],positions=new Map();
+      for(const i of indices){const r=records[i],word=clean(r.text);if(!word)continue;tokens.push(word);if(!positions.has(word))positions.set(word,[]);positions.get(word).push((r.rect.x-box.x)/box.w);}
+      return {...t,bounds:box,words:new Set(tokens),positions,signature:JSON.stringify(tokens)};
+    });
+  };
   const L=tables(left),R=tables(right),candidates=[];
+  // PDF border detection can split one logical table into several small tables.
+  // After a row is deleted, every later table moves vertically. Match unique
+  // content anchors before reusing page coordinates, which now refer to other rows.
+  const counts=tables=>{const words=new Map(),signatures=new Map();for(const t of tables){for(const word of t.words)words.set(word,(words.get(word)||0)+1);if(t.signature!=='[]')signatures.set(t.signature,(signatures.get(t.signature)||0)+1);}return {words,signatures};};
+  const countL=counts(L),countR=counts(R);
   const similarity=(a,b)=>{
     if(a.page!==b.page)return null;const shared=[...a.words].filter(s=>b.words.has(s)).length;
+    const uniqueShared=[...a.words].filter(s=>b.words.has(s)&&countL.words.get(s)===1&&countR.words.get(s)===1&&a.positions.get(s).length===1&&b.positions.get(s).length===1&&near(a.positions.get(s)[0],b.positions.get(s)[0],.01)).length;
+    const exact=a.signature!=='[]'&&a.signature===b.signature&&countL.signatures.get(a.signature)===1&&countR.signatures.get(b.signature)===1;
     const size=near(a.bounds.x,b.bounds.x,4)&&near(a.bounds.w,b.bounds.w,5),position=near(a.bounds.y,b.bounds.y,6);
-    if((!size&&!(shared>=2&&position&&near(a.bounds.x,b.bounds.x,4)))||!position&&shared<2)return null;
-    return {shared,score:(position?40:0)+(size?10:0)+Math.min(10,shared)*10+(near(a.bounds.h,b.bounds.h,3)?10:0)};
+    if((!size&&!(shared>=2&&position&&near(a.bounds.x,b.bounds.x,4)))||(!position&&!exact&&!uniqueShared))return null;
+    return {shared,score:(exact?200:0)+(uniqueShared?100+Math.min(3,uniqueShared)*20:0)+(position?40:0)+(size?10:0)+Math.min(10,shared)*10+(near(a.bounds.h,b.bounds.h,3)?10:0)};
   };
   L.forEach((a,i)=>R.forEach((b,j)=>{const score=similarity(a,b);if(score)candidates.push({i,j,...score});}));
   const pairedL=new Set(),pairedR=new Set();
