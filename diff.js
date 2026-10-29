@@ -1,4 +1,5 @@
 import {workbookRows,alignRows} from './row-alignment.js';
+import {alignPdfCells,pdfReviewRecord} from './pdf-alignment.js?v=20261029-9';
 
 const compact = s => String(s||'').trim().replace(/\s+/g,' ');
 const norm = (s,ignoreSpace) => ignoreSpace?String(s??'').replace(/\s+/g,''):String(s??'').replace(/\r\n/g,'\n');
@@ -76,6 +77,17 @@ function compareWorkbook(a,b,ra,rb,options){
 
 function compareRecords(ra,rb,options){
   const out=[],usedL=new Set(),usedR=new Set();
+  if(options.pdfComparison){
+    const alignment=alignPdfCells(ra,rb);alignment.consumedLeft.forEach(i=>usedL.add(i));alignment.consumedRight.forEach(j=>usedR.add(j));
+    for(const {i,j} of alignment.pairs){const a=ra[i],b=rb[j];let diff;
+      if(!a.text.trim()&&b.text.trim())diff=mk('added','content',a,b,'같은 셀의 빈칸에 내용이 추가되었습니다.');
+      else if(a.text.trim()&&!b.text.trim())diff=mk('removed','content',a,b,'셀은 유지되고 기존 내용이 삭제되어 빈칸이 되었습니다.');
+      else diff=comparePair(a,b,options);if(diff)out.push(diff);
+    }
+    for(const i of alignment.removed)if(ra[i].text.trim())out.push(mk('removed','content',ra[i],null,'대응하는 표·행이 삭제되어 원본에만 있습니다.'));
+    for(const j of alignment.added)if(rb[j].text.trim())out.push(mk('added','content',null,rb[j],'대응 표에 새 행·셀이 추가되었습니다.'));
+    for(const r of alignment.reviews)out.push(mk('review','alignment',pdfReviewRecord(ra,r.left),pdfReviewRecord(rb,r.right),r.detail,'uncertain'));
+  }
   const objects=records=>{const map=new Map();records.forEach((r,i)=>{const key=r.meta?.sourceObjectKey;if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(i);});return map;};
   const objectL=objects(ra),objectR=objects(rb);
   for(const [key,left] of objectL){const right=objectR.get(key);if(left.length!==1||right?.length!==1)continue;const i=left[0],j=right[0];usedL.add(i);usedR.add(j);const diff=comparePair(ra[i],rb[j],options);if(diff)out.push(diff);}
@@ -83,7 +95,7 @@ function compareRecords(ra,rb,options){
   // columns and empty cells. Use it only when both table shapes are unchanged.
   const sourceCells=records=>{const map=new Map();records.forEach((r,i)=>{const key=r.meta?.sourceCellKey||r.meta?.hwpxCellKey;if(!key)return;if(!map.has(key))map.set(key,[]);map.get(key).push(i);});return map;};
   const sourceL=sourceCells(ra),sourceR=sourceCells(rb);
-  for(const [key,left] of sourceL){const right=sourceR.get(key);if(left.length!==1||right?.length!==1)continue;const i=left[0],j=right[0];if(ra[i].meta.tableShape!==rb[j].meta.tableShape)continue;usedL.add(i);usedR.add(j);const diff=comparePair(ra[i],rb[j],options);if(diff)out.push(diff);}
+  for(const [key,left] of sourceL){const right=sourceR.get(key);if(left.length!==1||right?.length!==1)continue;const i=left[0],j=right[0];if(usedL.has(i)||usedR.has(j)||ra[i].meta.tableShape!==rb[j].meta.tableShape)continue;usedL.add(i);usedR.add(j);const diff=comparePair(ra[i],rb[j],options);if(diff)out.push(diff);}
   // Table cells have a better anchor than their absolute page position:
   // the unique first-column label and the column index. This also works
   // across XLSX/HWPX when the table has been moved or repaginated.
@@ -123,16 +135,17 @@ function compareRecords(ra,rb,options){
 export function contentDifferences(a,b,options){
   const pagesA=options.pagesA||new Set(a.pages.map((_,i)=>i)),pagesB=options.pagesB||new Set(b.pages.map((_,i)=>i));
   const compareObjects=options.mode==='precision'&&[a,b].every(d=>d.preview==='hwp-layout');
-  const ra=a.records.filter(r=>(compareObjects||!r.meta?.sourceObjectKey)&&matchesScope(r,pagesA,options.regionA));
-  const rb=b.records.filter(r=>(compareObjects||!r.meta?.sourceObjectKey)&&matchesScope(r,pagesB,options.regionB));
-  const diffs=a.type==='xlsx'&&b.type==='xlsx'?compareWorkbook(a,b,ra,rb,options):compareRecords(ra,rb,options);
+  const pdfComparison=a.type==='pdf'&&b.type==='pdf',visible=r=>pdfComparison||!r.meta?.pdfCell||!!r.text.trim();
+  const ra=a.records.filter(r=>visible(r)&&(compareObjects||!r.meta?.sourceObjectKey)&&matchesScope(r,pagesA,options.regionA));
+  const rb=b.records.filter(r=>visible(r)&&(compareObjects||!r.meta?.sourceObjectKey)&&matchesScope(r,pagesB,options.regionB));
+  const diffs=a.type==='xlsx'&&b.type==='xlsx'?compareWorkbook(a,b,ra,rb,options):compareRecords(ra,rb,{...options,pdfComparison});
   if(diffs.length>1800)diffs.splice(1799,diffs.length-1799,mk('review','limit',null,null,'차이가 1,800건을 초과하여 일부만 표시합니다. 비교 범위를 나누어 주세요.','uncertain'));
   return diffs.map((d,i)=>({...d,id:`text-${i}`}));
 }
 
 function newCanvas(){return document.createElement('canvas');}
 async function pixels(doc,index){
-  const {renderPage}=await import('./readers.js?v=20261029-8');
+  const {renderPage}=await import('./readers.js?v=20261029-9');
   const source=newCanvas();await renderPage(doc,index,source,550);
   const canvas=newCanvas();canvas.width=420;canvas.height=570;
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.fillStyle='white';ctx.fillRect(0,0,420,570);
