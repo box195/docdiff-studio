@@ -23,8 +23,40 @@ function keyColumn(L,R,requested){
 
 const similarity=(a,b)=>{const cols=new Set([...a.values.keys(),...b.values.keys()]);if(!cols.size)return 1;let same=0;for(const col of cols)if(a.values.get(col)===b.values.get(col))same++;return same/cols.size};
 
+// An automatically renumbered list is not a stable ID column.  Detect it only
+// when both versions contain an ordered numeric sequence AND several unique
+// non-numbered rows prove that the same content now has another number.
+function renumberedColumn(L,R,requested){
+  if(requested!=null&&requested!=='auto'&&requested!=='none')return null;
+  const numeric=s=>/^\d+$/.test(s??'')?Number(s):null;
+  const sequential=(rows,col)=>{
+    const nums=rows.map(r=>numeric(r.values.get(col))).filter(n=>n!=null);
+    if(nums.length<4||nums.length<rows.filter(r=>!r.blank).length*.7)return false;
+    let steps=0;for(let i=1;i<nums.length;i++)if(nums[i]===nums[i-1]+1)steps++;
+    return steps>=Math.max(3,(nums.length-1)*.87);
+  };
+  const cols=new Set([...L.flatMap(r=>[...r.values.keys()]),...R.flatMap(r=>[...r.values.keys()])]);
+  for(const col of cols){
+    if(!sequential(L,col)||!sequential(R,col))continue;
+    const signature=r=>JSON.stringify([...r.values].filter(([c])=>c!==col).sort((a,b)=>a[0]-b[0]));
+    const l=buckets(L,signature),r=buckets(R,signature),deltas=new Map();
+    for(const [sig,ls] of l){const rs=r.get(sig);if(sig==='[]'||ls.length!==1||rs?.length!==1)continue;
+      const old=numeric(L[ls[0]].values.get(col)),now=numeric(R[rs[0]].values.get(col));
+      if(old==null||now==null||old===now)continue;
+      const delta=now-old;
+      // Only a displacement consistent with the actual row movement counts.
+      if(delta!==R[rs[0]].number-L[ls[0]].number)continue;
+      deltas.set(delta,(deltas.get(delta)||0)+1);
+    }
+    if([...deltas].some(([delta,count])=>delta!==0&&count>=2))return col;
+  }
+  return null;
+}
+
 export function alignRows(L,R,options={}){
-  const pairs=[],usedL=new Set(),usedR=new Set(),reviews=[],reviewedL=new Set(),reviewedR=new Set(),key=keyColumn(L,R,options.keyColumn),keyL=key?buckets(L,r=>r.values.get(key)||''):new Map(),keyR=key?buckets(R,r=>r.values.get(key)||''):new Map();
+  const serial=renumberedColumn(L,R,options.keyColumn);
+  if(serial)for(const row of [...L,...R])row.signature=JSON.stringify([...row.values].filter(([col])=>col!==serial).sort((a,b)=>a[0]-b[0]));
+  const pairs=[],usedL=new Set(),usedR=new Set(),reviews=[],reviewedL=new Set(),reviewedR=new Set(),key=serial?null:keyColumn(L,R,options.keyColumn),keyL=key?buckets(L,r=>r.values.get(key)||''):new Map(),keyR=key?buckets(R,r=>r.values.get(key)||''):new Map();
   const sigL=buckets(L,r=>r.signature),sigR=buckets(R,r=>r.signature);
   const pair=(i,j,reason)=>{if(usedL.has(i)||usedR.has(j))return;usedL.add(i);usedR.add(j);pairs.push({i,j,left:L[i],right:R[j],reason})};
   const uncertain=(li,rj,detail)=>{if(!li.length&&!rj.length)return;li.forEach(i=>reviewedL.add(i));rj.forEach(j=>reviewedR.add(j));reviews.push({left:li.map(i=>L[i]),right:rj.map(j=>R[j]),detail})};
@@ -45,7 +77,7 @@ export function alignRows(L,R,options={}){
   // Changed duplicate identifiers must never fall back to positional matching.
   if(key)for(const v of new Set([...keyL.keys(),...keyR.keys()])){let ls=keyL.get(v)||[],rs=keyR.get(v)||[];if(ls.length>1||rs.length>1){let a=ls.filter(i=>!usedL.has(i)),b=rs.filter(j=>!usedR.has(j));if(a.length||b.length)uncertain(a,b,`식별자 '${v.slice(0,60)}'가 중복되어 변경 행의 대응을 확정할 수 없습니다.`)}}
   // Repeated full rows with unequal occurrence counts are ambiguous even without IDs.
-  for(const [sig,ls] of sigL){let rs=sigR.get(sig)||[];if(ls.length!==rs.length&&(ls.length>1||rs.length>1)){let a=ls.filter(i=>!usedL.has(i)&&!reviewedL.has(i)),b=rs.filter(j=>!usedR.has(j)&&!reviewedR.has(j));if(a.length||b.length)uncertain(a,b,'동일한 행이 반복되어 어느 행이 삽입·삭제됐는지 확인이 필요합니다.')}}
+  for(const [sig,ls] of sigL){let rs=sigR.get(sig)||[];if(ls.length!==rs.length&&(ls.length>1||rs.length>1)){let a=ls.filter(i=>!usedL.has(i)&&!reviewedL.has(i)),b=rs.filter(j=>!usedR.has(j)&&!reviewedR.has(j));if(a.length||b.length)uncertain(a,b,serial?'순번 재정렬은 인식했지만 같은 내용의 행이 반복되어 정확히 어느 행이 삽입·삭제됐는지 확인이 필요합니다.':'동일한 행이 반복되어 어느 행이 삽입·삭제됐는지 확인이 필요합니다.')}}
   // Compare edits only within stable sequence gaps. IDs that disagree are not paired.
   const stable=increasing(pairs.map(p=>[p.i,p.j]));boundaries=[[-1,-1],...stable,[L.length,R.length]];
   for(let k=1;k<boundaries.length;k++){
@@ -59,5 +91,5 @@ export function alignRows(L,R,options={}){
   }
   const order=new Set(increasing(pairs.map(p=>[p.i,p.j])).map(([i])=>i));
   for(const p of pairs){p.moved=!order.has(p.i);p.ambiguous=(sigL.get(p.left.signature)?.length>1||sigR.get(p.right.signature)?.length>1)&&p.reason!=='key'}
-  return {pairs,removed:L.filter((_,i)=>!usedL.has(i)&&!reviewedL.has(i)),added:R.filter((_,j)=>!usedR.has(j)&&!reviewedR.has(j)),reviews,keyColumn:key};
+  return {pairs,removed:L.filter((_,i)=>!usedL.has(i)&&!reviewedL.has(i)),added:R.filter((_,j)=>!usedR.has(j)&&!reviewedR.has(j)),reviews,keyColumn:key,renumberedColumn:serial};
 }
