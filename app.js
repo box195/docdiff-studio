@@ -1,8 +1,8 @@
-import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261029-9';
-import {contentDifferences,visualDifferences,parsePageRanges,summarize,unexplainedVisualDifferences} from './diff.js?v=20261029-9';
-import {groupChanges,navigationDirection,revealInList} from './review-navigation.js?v=20261029-9';
-import {changePresentation,isFormatChange} from './change-presentation.js?v=20261029-9';
-import {changeOverlays,paddedContext,changedSpans} from './text-locations.js?v=20261029-9';
+import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261029-10';
+import {contentDifferences,visualDifferences,parsePageRanges,summarize,unexplainedVisualDifferences} from './diff.js?v=20261029-10';
+import {groupChanges,navigationDirection,revealInList} from './review-navigation.js?v=20261029-10';
+import {changePresentation,isFormatChange} from './change-presentation.js?v=20261029-10';
+import {changeOverlays,paddedContext,changedSpans} from './text-locations.js?v=20261029-10';
 
 const $=id=>document.getElementById(id);
 const state={files:[null,null],docs:[null,null],pages:[0,0],regions:[null,null],rawDiffs:[],diffs:[],active:-1,filter:'all',busy:false,renderSeq:[0,0],selectionSeq:0,lastOptions:null};
@@ -60,7 +60,7 @@ async function ensureDocuments(){
 
 function backgroundCompare(a,b,options){
  if(typeof Worker==='undefined')return Promise.resolve(contentDifferences(a,b,options));
- return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261029-9',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
+ return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261029-10',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
 }
 async function compare(){
   if(state.busy)return;state.busy=true;$('compareBtn').disabled=true;
@@ -81,7 +81,7 @@ async function compare(){
     if(state.active>=0)await selectDiff(0);else setStatus('선택한 조건에서 차이가 발견되지 않았습니다. 검사 불가 항목도 함께 확인하세요.');
     const warnings=[...state.docs[0].warnings,...state.docs[1].warnings];
     if(opts.mode==='precision'&&state.docs.some(d=>d.type!=='pdf'&&d.preview!=='hwp-layout'))warnings.push('이 형식 조합은 서식·인쇄 좌표를 완전히 비교하지 못하며 화면 보조 검사가 생략될 수 있습니다.');
-    if(warnings.length)setStatus(`${state.diffs.length}건 결과. 주의: ${[...new Set(warnings)].join(' / ')}`);
+    if(warnings.length)setStatus(`${state.rawDiffs.length}건 검출. 주의: ${[...new Set(warnings)].join(' / ')}`);
   }catch(e){setStatus(`비교 실패: ${e.message||e}`,true);console.error(e);}
   finally{state.busy=false;$('compareBtn').disabled=false;setTimeout(()=>$('progressBox').classList.add('hidden'),1800);}
 }
@@ -123,7 +123,7 @@ function repaintOverlays(i){
     for(const part of parts){if(part.record.page!==state.pages[i])continue;
       const el=document.createElement('div');el.className=`annotation annotation-context mark-${mark.tone} ${active?'active':''} ${part.format?'format-context':''}`;
       const box=paddedContext(part.record.rect,pg);Object.assign(el.style,pageRectStyle(box,pg));el.title=`#${index+1} ${mark.label}: ${d.detail}${part.record.label?' · '+part.record.label:''}`;
-      if(active&&!tagged){const tag=document.createElement('span');tag.className='annotation-tag'+(box.y<30?' tag-inside':'');tag.textContent=`#${index+1} ${mark.label}`;el.appendChild(tag);tagged=true;}overlay.appendChild(el);
+      if(active&&!tagged){const tag=document.createElement('span');tag.className='annotation-tag'+(box.y<30?' tag-inside':'');tag.textContent=`#${index+1} ${mark.label}${d.members?' · '+d.members.length+'셀':''}`;el.appendChild(tag);tagged=true;}overlay.appendChild(el);
       for(const rect of part.highlights){const ink=document.createElement('div');ink.className=`text-change-mark mark-${mark.tone} ${active?'active':''}`;Object.assign(ink.style,pageRectStyle(rect,pg));ink.title=rect.approximate?'변경 글자 · 글꼴에 따라 강조 위치가 약간 다를 수 있음':'변경 글자';overlay.appendChild(ink);}
     }
   });
@@ -165,12 +165,13 @@ function renderActiveChange(){
   const d=state.diffs[state.active],panel=$('activeChangePanel');panel.classList.toggle('hidden',!d);if(!d){for(const side of ['A','B']){$('sideState'+side).textContent=side==='A'?'이전 내용 · 삭제된 부분':'새 내용 · 추가된 부분';$('sideState'+side).className='side-state';}return;}
   const p=changePresentation(d);for(const side of ['A','B']){const mark=side==='A'?p.left:p.right;$('sideState'+side).textContent=mark.label;$('sideState'+side).className='side-state tone-'+mark.tone;}panel.className=`active-change kind-${p.kind}`;
   const marked=(value,side)=>{if(d.category!=='content'||d.type==='review'||d.members||value.length>140)return escapeHtml(ftext(value,140));const spans=changedSpans(d.oldText,d.newText,state.lastOptions?.ignoreSpace)[side];let start=0,html='';for(const span of spans){html+=escapeHtml(value.slice(start,span.start))+`<mark>${escapeHtml(value.slice(span.start,span.end))}</mark>`;start=span.end;}return html+escapeHtml(value.slice(start));};
-  const hint=d.category==='content'?`${(d.left||d.right)?.role==='cell'?'셀 단위 이동':'문장 단위 이동 · 셀 경계 미확인'} · 연한 테두리: 주변 구간 / 진한 강조: 변경 글자`:'';
-  panel.innerHTML=`<div class="active-change-title"><b>#${state.active+1} ${escapeHtml(p.label)}</b><span>${escapeHtml(p.explanation)}</span></div><div class="before-after"><div><small>왼쪽 A · ${escapeHtml(p.left.label)}</small><strong>${marked(p.before,'left')}</strong></div><div><small>오른쪽 B · ${escapeHtml(p.right.label)}</small><strong>${marked(p.after,'right')}</strong></div></div>${hint?`<div class="highlight-hint">${hint}</div>`:''}`;
+  const hint=d.category==='content'?`${d.members?d.members.length+'셀을 한 번에 이동 · 강조는 각 셀에 유지':(d.left||d.right)?.role==='cell'?'셀 단위 이동':'문장 단위 이동 · 셀 경계 미확인'} · 테두리: 주변 구간 / 진한 강조: 변경 글자`:'';
+  panel.innerHTML=`<div class="active-change-title"><b>#${state.active+1} ${escapeHtml(p.label)}${d.members?' · '+d.members.length+'셀 묶음':''}</b><span>${escapeHtml(p.explanation)}</span></div><div class="before-after"><div><small>왼쪽 A · ${escapeHtml(p.left.label)}</small><strong>${marked(p.before,'left')}</strong></div><div><small>오른쪽 B · ${escapeHtml(p.right.label)}</small><strong>${marked(p.after,'right')}</strong></div></div>${hint?`<div class="highlight-hint">${hint}</div>`:''}`;
 }
 function renderResults(){
-  const visible=filterDiffs(),counts=summarize(state.diffs);
-  $('resultCount').textContent=visible.length;$('changeCounter').textContent=state.diffs.length?`전체 ${state.diffs.length}건 · 선택 ${Math.max(0,visible.findIndex(d=>d.index===state.active)+1)}/${visible.length}${state.rawDiffs.length>state.diffs.length?` · 세부 ${state.rawDiffs.length}건`:''}`:'차이점 없음';
+  const visible=filterDiffs(),counts=summarize(state.rawDiffs),individualVisible=visible.reduce((n,d)=>n+(d.members?.length||1),0);
+  $('resultCount').textContent=visible.some(d=>d.members)?`${visible.length}묶음 · 세부 ${individualVisible}건`:visible.length;
+  $('changeCounter').textContent=state.diffs.length?`검출 ${state.rawDiffs.length}건 · 이동 ${state.diffs.length}곳 · 선택 ${Math.max(0,visible.findIndex(d=>d.index===state.active)+1)}/${visible.length}`:'차이점 없음';
   $('summaryChips').innerHTML=`<span>수정 ${counts.changed||0}</span><span>추가 ${counts.added||0}</span><span>삭제 ${counts.removed||0}</span><span>확인 ${counts.review||0}</span>`;renderActiveChange();
   $('prevBtn').disabled=$('nextBtn').disabled=!visible.length;$('exportBtn').disabled=!state.diffs.length;
   const list=$('resultsList');list.replaceChildren();
@@ -180,7 +181,7 @@ function renderResults(){
     const location=(r,i)=>r?.page!=null?`${i?'수정본':'원본'} ${state.docs[i]?.type==='hwpx'&&state.docs[i]?.preview!=='hwp-layout'?`추출 ${r.page+1}구간 · ${r.label||''}`:`${r.page+1}쪽`}`:`${i?'수정본':'원본'} 없음`;
     const a=location(d.left,0),b=location(d.right,1);
     card.innerHTML=`<span class="result-icon ${p.kind}">${p.symbol}</span><div class="result-content"><strong>#${d.index+1} <span class="change-badge">${escapeHtml(p.label)}</span>${d.members?` · ${d.members.length}개 셀`:''}</strong><p class="result-description">${escapeHtml(d.detail)}</p><div class="before-after"><div><small>A 기존</small><span>${escapeHtml(ftext(p.before,110))}</span></div><div><small>B 변경</small><span>${escapeHtml(ftext(p.after,110))}</span></div></div><span class="result-meta">${a} / ${b}${d.confidence!=='certain'?' · 직접 확인 필요':''}</span></div>`;
-    if(d.members){const details=document.createElement('details');details.className='cell-details';details.innerHTML=`<summary>셀별 상세 ${d.members.length}개</summary>${d.members.map(m=>{const r=m.right||m.left;return `<p><b>${escapeHtml(r.meta.sheet||'표')} · ${r.meta.row||r.meta.tableRow}행 ${r.meta.col}열</b><br>${escapeHtml(m.oldText)} → ${escapeHtml(m.newText)}<br>${escapeHtml(m.detail)}</p>`;}).join('')}`;details.addEventListener('click',e=>e.stopPropagation());card.querySelector('.result-content').appendChild(details);}
+    if(d.members){const details=document.createElement('details');details.className='cell-details';details.innerHTML=`<summary>셀별 상세 ${d.members.length}개</summary>${d.members.map(m=>{const r=m.right||m.left,meta=r.meta||{};return `<p><b>${escapeHtml(meta.sheet||'표')} · ${meta.row||meta.tableRow||meta.pdfRow||'?'}행 ${meta.col||meta.pdfCol||'?'}열</b><br>${escapeHtml(m.oldText||'(빈 셀)')} → ${escapeHtml(m.newText||'(빈 셀)')}<br>${escapeHtml(m.detail)}</p>`;}).join('')}`;details.addEventListener('click',e=>e.stopPropagation());card.querySelector('.result-content').appendChild(details);}
     card.addEventListener('click',()=>selectDiff(d.index));card.addEventListener('keydown',e=>{if(e.target===card&&(e.key==='Enter'||e.key===' ')){e.preventDefault();selectDiff(d.index);}});list.appendChild(card);
   }
   repaintOverlays(0);repaintOverlays(1);
@@ -195,7 +196,7 @@ function selectDiff(index){
   selectionTask=selectionTask.catch(()=>{}).then(async()=>{
     if(token!==state.selectionSeq)return;
     for(let i=0;i<2;i++){const r=i===0?d.left:d.right;if(r?.page!=null&&state.pages[i]!==r.page)await showPage(i,r.page);if(token!==state.selectionSeq)return;}
-    for(let i=0;i<2;i++){repaintOverlays(i);const doc=state.docs[i],r=i===0?d.left:d.right;if(!r?.rect||!doc)continue;const side=sideLetter(i),vp=$(`viewport${side}`),pg=doc.pages[r.page],shell=$(`shell${side}`);const factor=shell.getBoundingClientRect().width/pg.width;vp.scrollTop=Math.max(0,(r.rect.y+r.rect.h/2)*factor-vp.clientHeight/2);}
+    for(let i=0;i<2;i++){repaintOverlays(i);const doc=state.docs[i],r=i===0?d.left:d.right;if(!r?.rect||!doc)continue;const side=sideLetter(i),vp=$(`viewport${side}`),pg=doc.pages[r.page],shell=$(`shell${side}`);const factor=shell.getBoundingClientRect().width/pg.width;vp.scrollTop=Math.max(0,d.members&&r.rect.h*factor>vp.clientHeight-30?r.rect.y*factor-15:(r.rect.y+r.rect.h/2)*factor-vp.clientHeight/2);}
   }).catch(e=>setStatus(`미리보기 이동 실패: ${e.message||e}`,true));
   return selectionTask;
 }
@@ -207,7 +208,7 @@ $('focusOnly').addEventListener('change',()=>{repaintOverlays(0);repaintOverlays
 $('groupCells').addEventListener('change',()=>{const current=state.diffs[state.active],id=current?.members?.[0]?.id||current?.id;state.diffs=$('groupCells').checked?groupChanges(state.rawDiffs):state.rawDiffs;const index=state.diffs.findIndex(d=>d.id===id||d.members?.some(m=>m.id===id));state.active=index;renderResults();if(index>=0)selectDiff(index);});
 
 $('exportBtn').addEventListener('click',()=>{
-  const output={app:'문서 비교실 v0.9',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
+  const output={app:'문서 비교실 v0.10',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.rawDiffs),navigationCount:state.diffs.length,navigationSummary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,memberIds:(d.members||[d]).map(m=>m.id),originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
   const blob=new Blob([JSON.stringify(output,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`document-diff-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 
