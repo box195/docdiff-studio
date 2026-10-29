@@ -1,5 +1,6 @@
 // Group only adjacent, confidently matched spreadsheet cells; retain every member.
 import {groupHwpFormats} from './hwp-grouping.js?v=20261029-8';
+import {groupNavigationAreas} from './navigation-groups.js?v=20261029-10';
 const cell = r => r?.role === 'cell' && r.meta?.sheet && Number.isInteger(r.meta.row) && Number.isInteger(r.meta.col);
 function groupKey(d) {
   if (d.confidence !== 'certain' || !['content','format'].includes(d.category) || d.type === 'review') return null;
@@ -29,7 +30,7 @@ export function groupChanges(diffs) {
       if(members.length>1){const left=mergeRecord(members,'left'),right=mergeRecord(members,'right'),r=right||left,last=(members.at(-1).right||members.at(-1).left);diff={...first,id:`group-${first.id}`,left,right,oldText:left?.text||'',newText:right?.text||'',members,detail:`${r.meta.sheet} · ${column(r.meta.col)}${r.meta.row}:${column(last.meta.col)}${last.meta.row} · 연속 ${members.length}셀 ${first.category==='format'?'서식 변경':'내용 변경'} (${first.detail})`};}groups.push({index:Math.min(...run.map(x=>x.index)),diff});run=[];};
     for(const item of bucket){if(run.length&&!adjacent(run.at(-1).d,item.d))flush();run.push(item);}flush();
   }
-  return groups.sort((a,b)=>a.index-b.index).map(x=>x.diff);
+  return groupNavigationAreas(groups.sort((a,b)=>a.index-b.index).map(x=>x.diff));
 }
 
 export function navigationDirection(event) {

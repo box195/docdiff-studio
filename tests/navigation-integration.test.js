@@ -35,5 +35,14 @@ test('실제 앱 다음/방향키 이동: 미리보기 포커스, 외부 스크�
     await app.selectDiff(app.state.active);assert.equal(app.state.active,0);assert(prevented);
     events.keydown({key:'ArrowDown',target:{closest:()=>({tagName:'INPUT'})},preventDefault(){throw Error('입력 중 방향키를 가로채면 안 됨');}});
     assert.equal(app.state.active,0);assert.equal(outerScrolls,0);
+    // Grouping changes only the navigation view, never the detected records.
+    const pdfRecord=n=>({role:'cell',text:'값'+n,page:0,rect:{x:200,y:100+n*20,w:100,h:20},meta:{pdfTableKey:'T',pdfRow:n,pdfCol:1}});
+    const raw=[1,2,3,4].map(n=>({id:'pdf-'+n,type:'changed',category:'content',confidence:'certain',left:pdfRecord(n),right:pdfRecord(n),oldText:'전'+n,newText:'후'+n,detail:'내용'}));
+    const snapshot=JSON.stringify(raw);app.state.rawDiffs=app.state.diffs=raw;app.state.active=0;
+    get('groupCells').checked=true;get('groupCells').events.change();await app.selectDiff(0);
+    assert.equal(app.state.diffs.length,1);assert.equal(app.state.diffs[0].members.length,4);assert.equal(JSON.stringify(app.state.rawDiffs),snapshot);
+    assert.match(get('summaryChips').innerHTML,/수정 4/);assert.match(get('changeCounter').textContent,/검출 4건 · 이동 1곳/);
+    get('groupCells').checked=false;get('groupCells').events.change();await app.selectDiff(0);
+    assert.equal(app.state.diffs,raw);assert.equal(JSON.stringify(app.state.rawDiffs),snapshot);assert.equal(outerScrolls,0);
   } finally {globalThis.document=saved.document;globalThis.window=saved.window;}
 });
