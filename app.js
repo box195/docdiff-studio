@@ -1,5 +1,5 @@
 import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261029-10';
-import {contentDifferences,visualDifferences,parsePageRanges,summarize,unexplainedVisualDifferences} from './diff.js?v=20261029-10';
+import {contentDifferences,visualDifferences,parsePageRanges,summarize,unexplainedVisualDifferences} from './diff.js?v=20261029-12';
 import {groupChanges,navigationDirection,revealInList} from './review-navigation.js?v=20261029-10';
 import {changePresentation,isFormatChange} from './change-presentation.js?v=20261029-10';
 import {changeOverlays,paddedContext,changedSpans} from './text-locations.js?v=20261029-10';
@@ -60,7 +60,7 @@ async function ensureDocuments(){
 
 function backgroundCompare(a,b,options){
  if(typeof Worker==='undefined')return Promise.resolve(contentDifferences(a,b,options));
- return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261029-10',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
+ return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261029-12',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
 }
 async function compare(){
   if(state.busy)return;state.busy=true;$('compareBtn').disabled=true;
