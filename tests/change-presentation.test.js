@@ -14,3 +14,7 @@ test('음영 추가·해제는 본문 추가·삭제와 별도로 설명',()=>{
 test('음영 묶음은 수십 개 빈 셀 대신 전후 색상과 개수 표시',()=>{const d={type:'changed',category:'format',members:[0,1,2].map(()=>({formatChanges:[{property:'cellFill',before:{type:'none'},after:{fillColor:'#a6a6a6'}}]}))};const p=changePresentation(d);assert.equal(p.before,'음영 없음');assert.equal(p.after,'회색 음영');assert.match(p.explanation,/3개 셀/);});
 test('서식 필터에는 서식과 내용이 함께 바뀐 항목도 포함',()=>{assert(isFormatChange({category:'content',formatChanges:[{property:'cellFill'}]}));assert(!isFormatChange({category:'content'}));assert(isFormatChange({category:'page-format'}));});
 test('확인 필요 항목은 확정된 추가·삭제로 표시하지 않음',()=>{const p=changePresentation({type:'review',category:'alignment'});assert.equal(p.left.tone,'review');assert.equal(p.right.tone,'review');assert.match(p.explanation,/확정하지 못한/);});
+test('기존 셀에 내용 입력/비우기는 셀 자체 추가/삭제와 구별',()=>{
+  const r={role:'cell'},a=changePresentation({type:'added',left:r,right:r,newText:'입력'}),b=changePresentation({type:'removed',left:r,right:r,oldText:'삭제'});
+  assert.equal(a.label,'내용 추가');assert.equal(a.before,'빈 셀');assert.equal(b.label,'내용 삭제');assert.equal(b.after,'빈 셀');assert.match(b.explanation,/셀은 그대로/);
+});

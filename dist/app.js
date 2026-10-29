@@ -1,8 +1,8 @@
-import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261029-8';
-import {contentDifferences,visualDifferences,parsePageRanges,summarize,unexplainedVisualDifferences} from './diff.js?v=20261029-8';
-import {groupChanges,navigationDirection,revealInList} from './review-navigation.js?v=20261029-8';
-import {changePresentation,isFormatChange} from './change-presentation.js?v=20261029-8';
-import {changeOverlays,paddedContext,changedSpans} from './text-locations.js?v=20261029-8';
+import {readDocument,renderPage,demoDocuments} from './readers.js?v=20261029-9';
+import {contentDifferences,visualDifferences,parsePageRanges,summarize,unexplainedVisualDifferences} from './diff.js?v=20261029-9';
+import {groupChanges,navigationDirection,revealInList} from './review-navigation.js?v=20261029-9';
+import {changePresentation,isFormatChange} from './change-presentation.js?v=20261029-9';
+import {changeOverlays,paddedContext,changedSpans} from './text-locations.js?v=20261029-9';
 
 const $=id=>document.getElementById(id);
 const state={files:[null,null],docs:[null,null],pages:[0,0],regions:[null,null],rawDiffs:[],diffs:[],active:-1,filter:'all',busy:false,renderSeq:[0,0],selectionSeq:0,lastOptions:null};
@@ -60,7 +60,7 @@ async function ensureDocuments(){
 
 function backgroundCompare(a,b,options){
  if(typeof Worker==='undefined')return Promise.resolve(contentDifferences(a,b,options));
- return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261029-8',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
+ return new Promise((resolve,reject)=>{const worker=new Worker(new URL('./compare-worker.js?v=20261029-9',import.meta.url),{type:'module'});const clean=d=>({type:d.type,preview:d.preview,name:d.name,sheets:d.sheets,pages:d.pages.map(p=>({width:p.width,height:p.height})),records:d.records});worker.onmessage=e=>{worker.terminate();e.data.error?reject(Error(e.data.error)):resolve(e.data.results)};worker.onerror=e=>{worker.terminate();reject(Error('비교 작업 오류: '+e.message))};worker.postMessage({left:clean(a),right:clean(b),options})});
 }
 async function compare(){
   if(state.busy)return;state.busy=true;$('compareBtn').disabled=true;
@@ -207,7 +207,7 @@ $('focusOnly').addEventListener('change',()=>{repaintOverlays(0);repaintOverlays
 $('groupCells').addEventListener('change',()=>{const current=state.diffs[state.active],id=current?.members?.[0]?.id||current?.id;state.diffs=$('groupCells').checked?groupChanges(state.rawDiffs):state.rawDiffs;const index=state.diffs.findIndex(d=>d.id===id||d.members?.some(m=>m.id===id));state.active=index;renderResults();if(index>=0)selectDiff(index);});
 
 $('exportBtn').addEventListener('click',()=>{
-  const output={app:'문서 비교실 v0.8',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
+  const output={app:'문서 비교실 v0.9',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
   const blob=new Blob([JSON.stringify(output,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`document-diff-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 
