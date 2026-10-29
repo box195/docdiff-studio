@@ -1,4 +1,4 @@
-import {workbookRows,alignRows} from './row-alignment.js';
+import {workbookRows,alignRows} from './row-alignment.js?v=20261029-13';
 import {alignPdfCells,pdfReviewRecord} from './pdf-alignment.js?v=20261029-12';
 
 const compact = s => String(s||'').trim().replace(/\s+/g,' ');
@@ -66,7 +66,10 @@ function compareWorkbook(a,b,ra,rb,options){
    const left=rowRecord(pair.left),right=rowRecord(pair.right);
    if(pair.moved)out.push(mk(pair.ambiguous?'review':'changed','row-move',left,right,`${sheet}: ${pair.left.number}행 → ${pair.right.number}행으로 순서 이동`,pair.ambiguous?'uncertain':'probable'));
    const lc=new Map(pair.left.cells.filter(c=>!c.meta.emptyRow).map(c=>[c.meta.col,c])),rc=new Map(pair.right.cells.filter(c=>!c.meta.emptyRow).map(c=>[c.meta.col,c]));
-   for(const col of new Set([...lc.keys(),...rc.keys()])){const l=lc.get(col),r=rc.get(col);let diff;if(l&&r)diff=comparePair(l,r,pairOptions);else if(l&&(l.text!==''||l.meta.formula||options.mode==='precision'&&l.style))diff=mk('removed','content',l,null,'대응 행에서 셀이 삭제되었습니다.');else if(r&&(r.text!==''||r.meta.formula||options.mode==='precision'&&r.style))diff=mk('added','content',null,r,'대응 행에 셀이 추가되었습니다.');if(diff){if(pair.ambiguous){diff.type='review';diff.confidence='uncertain';diff.detail='중복 행의 대응 순서에 따라 결과가 달라질 수 있습니다. '+diff.detail}out.push(diff)}}
+   for(const col of new Set([...lc.keys(),...rc.keys()])){const l=lc.get(col),r=rc.get(col);let diff;if(l&&r){
+     const autoNumber=col===alignment.renumberedColumn&&/^\d+$/.test(l.text)&&/^\d+$/.test(r.text)&&Number(r.text)-Number(l.text)===pair.right.number-pair.left.number;
+     if(!autoNumber)diff=comparePair(l,r,pairOptions);
+   }else if(l&&(l.text!==''||l.meta.formula||options.mode==='precision'&&l.style))diff=mk('removed','content',l,null,'대응 행에서 셀이 삭제되었습니다.');else if(r&&(r.text!==''||r.meta.formula||options.mode==='precision'&&r.style))diff=mk('added','content',null,r,'대응 행에 셀이 추가되었습니다.');if(diff){if(pair.ambiguous){diff.type='review';diff.confidence='uncertain';diff.detail='중복 행의 대응 순서에 따라 결과가 달라질 수 있습니다. '+diff.detail}out.push(diff)}}
   }
   for(const row of alignment.removed)out.push(mk('removed','row',rowRecord(row),null,`${sheet}: 원본 ${row.number}행이 삭제되었습니다.`));
   for(const row of alignment.added)out.push(mk('added','row',null,rowRecord(row),`${sheet}: 수정본 ${row.number}행이 삽입되었습니다.`));

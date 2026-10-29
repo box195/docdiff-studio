@@ -11,6 +11,38 @@ test('한 셀 값 변경',()=>{let b=structuredClone(rows);b[49][2]='99999';let 
 test('100행 문서의 50번째 위치에 삽입: 삽입 행 1건만 표시',()=>{let b=structuredClone(rows);b.splice(49,0,['같은 분류','신규 항목','1']);let d=changes(rows,b);assert.equal(d.length,1);assert.equal(d[0].type,'added');assert.equal(d[0].category,'row');assert.equal(d[0].right.meta.row,50)});
 test('중간 여러 행 삽입',()=>{let b=structuredClone(rows);b.splice(49,0,['신규','첫째','1'],['신규','둘째','2'],['신규','셋째','3']);let d=changes(rows,b);assert.equal(d.length,3);assert(d.every(x=>x.type==='added'&&x.category==='row'))});
 test('중간 행 삭제',()=>{let b=structuredClone(rows);b.splice(49,1);let d=changes(rows,b);assert.equal(d.length,1);assert.equal(d[0].type,'removed')});
+test('일련번호가 1씩 당겨진 중간 행 삭제는 전체 수정이 아닌 삭제 1건',()=>{
+  const original=[['번호','장소','장비','모델'],...Array.from({length:160},(_,i)=>[String(i+1),'서울경기본부',`장비${i+1}`,`모델${(i+1)%13}`])];
+  const modified=structuredClone(original);modified.splice(119,1);
+  for(let i=1;i<modified.length;i++)modified[i][0]=String(i);
+  const d=changes(original,modified);
+  assert.equal(d.length,1,JSON.stringify(d.slice(0,12).map(x=>[x.type,x.oldText,x.newText])));
+  assert.equal(d[0].type,'removed');
+  assert.equal(d[0].category,'row');
+  assert.equal(d[0].left.meta.row,120);
+});
+test('연속 번호를 매긴 동일 장비가 반복될 땐 삭제 위치만 확인 필요로 남김',()=>{
+  const original=[['번호','지사','장비','모델'],...Array.from({length:180},(_,i)=>[String(i+1),'서울경기본부',i%17===0?`장비${i+1}`:'CCTV',i%11===0?'XV-3800RD':'XV-150U'])];
+  const modified=structuredClone(original);modified.splice(119,1);
+  for(let i=1;i<modified.length;i++)modified[i][0]=String(i);
+  const d=changes(original,modified);
+  assert.equal(d.length,1,JSON.stringify(d.slice(0,12).map(x=>[x.type,x.category,x.oldText,x.newText])));
+  assert.equal(d[0].type,'review');
+  assert(!d.some(x=>x.type==='changed'||x.type==='added'));
+});
+test('연속 번호가 유지되는 고유 ID 행 삭제는 여전히 삭제 1건',()=>{
+  const original=[['ID','값'],...Array.from({length:140},(_,i)=>[String(i+1),`장비${i+1}`])];
+  const modified=structuredClone(original);modified.splice(70,1);
+  const d=changes(original,modified);
+  assert.equal(d.length,1);assert.equal(d[0].type,'removed');assert.equal(d[0].left.meta.row,71);
+});
+test('연속 번호로 새 행 삽입 후 번호를 밀어도 추가 1건',()=>{
+  const original=[['번호','장소','장비'],...Array.from({length:150},(_,i)=>[String(i+1),'서울경기본부',`장비${i+1}`])];
+  const modified=structuredClone(original);modified.splice(80,0,['0','성남','새 장비']);
+  for(let i=1;i<modified.length;i++)modified[i][0]=String(i);
+  const d=changes(original,modified);
+  assert.equal(d.length,1);assert.equal(d[0].type,'added');assert.equal(d[0].category,'row');
+});
 test('행 이동을 삭제/추가로 오인하지 않음',()=>{let b=structuredClone(rows);let [m]=b.splice(20,1);b.splice(70,0,m);let d=changes(rows,b);assert.equal(d.length,1);assert.equal(d[0].category,'row-move')});
 test('중복 행이 있어도 동일하면 차이 없음',()=>{let a=[['분류','항목'],['반복','동일'],['반복','동일'],['끝','마지막']];assert.deepEqual(changes(a,a),[])});
 test('중복 ID의 변경은 잘못 짝짓지 않고 검토 필요',()=>{let a=[['ID','내용'],['X','원본 하나'],['X','원본 둘'],['Y','그대로']],b=[['ID','내용'],['X','원본 하나'],['X','수정 둘'],['Y','그대로']];let d=changes(a,b);assert(d.some(x=>x.type==='review'));assert(!d.some(x=>x.type==='changed'&&x.category==='content'))});
