@@ -118,14 +118,16 @@ function repaintOverlays(i){
   state.diffs.forEach((d,index)=>{const r=i===0?d.left:d.right;if(!visible.has(index)||!r?.rect||r.page!==state.pages[i])return;
     if($('focusOnly').checked&&index!==state.active)return;
     const presentation=changePresentation(d),mark=i===0?presentation.left:presentation.right,active=index===state.active;
-    const parts=changeOverlays(d,i===0?'left':'right',state.lastOptions?.ignoreSpace);
+    const parts=changeOverlays(d,i===0?'left':'right',state.lastOptions?.ignoreSpace).filter(p=>p.record.page===state.pages[i]);
+    if(!parts.length)return;
+    const contexts=d.members?[{record:r,format:parts.some(p=>p.format)}]:parts;
     let tagged=false;
-    for(const part of parts){if(part.record.page!==state.pages[i])continue;
+    for(const part of contexts){
       const el=document.createElement('div');el.className=`annotation annotation-context mark-${mark.tone} ${active?'active':''} ${part.format?'format-context':''}`;
       const box=paddedContext(part.record.rect,pg);Object.assign(el.style,pageRectStyle(box,pg));el.title=`#${index+1} ${mark.label}: ${d.detail}${part.record.label?' · '+part.record.label:''}`;
       if(active&&!tagged){const tag=document.createElement('span');tag.className='annotation-tag'+(box.y<30?' tag-inside':'');tag.textContent=`#${index+1} ${mark.label}${d.members?' · '+d.members.length+'셀':''}`;el.appendChild(tag);tagged=true;}overlay.appendChild(el);
-      for(const rect of part.highlights){const ink=document.createElement('div');ink.className=`text-change-mark mark-${mark.tone} ${active?'active':''}`;Object.assign(ink.style,pageRectStyle(rect,pg));ink.title=rect.approximate?'변경 글자 · 글꼴에 따라 강조 위치가 약간 다를 수 있음':'변경 글자';overlay.appendChild(ink);}
     }
+    for(const part of parts)for(const rect of part.highlights){const ink=document.createElement('div');ink.className=`text-change-mark mark-${mark.tone} ${active?'active':''}`;Object.assign(ink.style,pageRectStyle(rect,pg));ink.title=rect.approximate?'변경 글자 · 글꼴에 따라 강조 위치가 약간 다를 수 있음':'변경 글자';overlay.appendChild(ink);}
   });
 }
 
@@ -165,7 +167,7 @@ function renderActiveChange(){
   const d=state.diffs[state.active],panel=$('activeChangePanel');panel.classList.toggle('hidden',!d);if(!d){for(const side of ['A','B']){$('sideState'+side).textContent=side==='A'?'이전 내용 · 삭제된 부분':'새 내용 · 추가된 부분';$('sideState'+side).className='side-state';}return;}
   const p=changePresentation(d);for(const side of ['A','B']){const mark=side==='A'?p.left:p.right;$('sideState'+side).textContent=mark.label;$('sideState'+side).className='side-state tone-'+mark.tone;}panel.className=`active-change kind-${p.kind}`;
   const marked=(value,side)=>{if(d.category!=='content'||d.type==='review'||d.members||value.length>140)return escapeHtml(ftext(value,140));const spans=changedSpans(d.oldText,d.newText,state.lastOptions?.ignoreSpace)[side];let start=0,html='';for(const span of spans){html+=escapeHtml(value.slice(start,span.start))+`<mark>${escapeHtml(value.slice(span.start,span.end))}</mark>`;start=span.end;}return html+escapeHtml(value.slice(start));};
-  const hint=d.category==='content'?`${d.members?d.members.length+'셀을 한 번에 이동 · 강조는 각 셀에 유지':(d.left||d.right)?.role==='cell'?'셀 단위 이동':'문장 단위 이동 · 셀 경계 미확인'} · 테두리: 주변 구간 / 진한 강조: 변경 글자`:'';
+  const hint=d.category==='content'?`${d.members?d.members.length+'셀을 한 번에 이동 · 테두리는 묶음 전체에 하나':(d.left||d.right)?.role==='cell'?'셀 단위 이동':'문장 단위 이동 · 셀 경계 미확인'} · 진한 강조: 각 셀의 변경 글자`:'';
   panel.innerHTML=`<div class="active-change-title"><b>#${state.active+1} ${escapeHtml(p.label)}${d.members?' · '+d.members.length+'셀 묶음':''}</b><span>${escapeHtml(p.explanation)}</span></div><div class="before-after"><div><small>왼쪽 A · ${escapeHtml(p.left.label)}</small><strong>${marked(p.before,'left')}</strong></div><div><small>오른쪽 B · ${escapeHtml(p.right.label)}</small><strong>${marked(p.after,'right')}</strong></div></div>${hint?`<div class="highlight-hint">${hint}</div>`:''}`;
 }
 function renderResults(){
@@ -208,7 +210,7 @@ $('focusOnly').addEventListener('change',()=>{repaintOverlays(0);repaintOverlays
 $('groupCells').addEventListener('change',()=>{const current=state.diffs[state.active],id=current?.members?.[0]?.id||current?.id;state.diffs=$('groupCells').checked?groupChanges(state.rawDiffs):state.rawDiffs;const index=state.diffs.findIndex(d=>d.id===id||d.members?.some(m=>m.id===id));state.active=index;renderResults();if(index>=0)selectDiff(index);});
 
 $('exportBtn').addEventListener('click',()=>{
-  const output={app:'문서 비교실 v0.10',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.rawDiffs),navigationCount:state.diffs.length,navigationSummary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,memberIds:(d.members||[d]).map(m=>m.id),originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
+  const output={app:'문서 비교실 v0.10.1',createdAt:new Date().toISOString(),files:state.docs.map(d=>({name:d.name,type:d.type,pages:d.pages.length,warnings:d.warnings})),options:{mode:state.lastOptions?.mode,scope:state.lastOptions?.scope,ignoreSpace:state.lastOptions?.ignoreSpace},groupConsecutiveCells:$('groupCells').checked,individualChangeCount:state.rawDiffs.length,individualChanges:state.rawDiffs,summary:summarize(state.rawDiffs),navigationCount:state.diffs.length,navigationSummary:summarize(state.diffs),changes:state.diffs.map(d=>({number:state.diffs.indexOf(d)+1,type:d.type,category:d.category,confidence:d.confidence,description:d.detail,before:d.oldText,after:d.newText,memberIds:(d.members||[d]).map(m=>m.id),originalPage:d.left?.page!=null?d.left.page+1:null,modifiedPage:d.right?.page!=null?d.right.page+1:null}))};
   const blob=new Blob([JSON.stringify(output,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`document-diff-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 
