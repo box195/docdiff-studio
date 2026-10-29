@@ -1,9 +1,12 @@
 /* The user-selected bytes stay in this tab. No uploads, eval, or document macros. */
 import * as pdfjs from './vendor/pdf.mjs';
+import {makeTextRun} from './text-locations.js?v=20261029-8';
+import {pdfCellLocator,pdfBlocks} from './pdf-cells.js?v=20261029-8';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdf.worker.mjs', import.meta.url).href;
 export const PAGE_WIDTH = 800;
 export const PAGE_HEIGHT = 1120;
+let sheetMeasure;
 
 const descendants = (node, name) => Array.from(node.getElementsByTagName('*')).filter(n => n.localName === name);
 const children = (node, name) => Array.from(node?.children || []).filter(n => n.localName === name);
@@ -25,7 +28,7 @@ export async function readDocument(file,onProgress=()=>{},settings={}){
   if(file.size>80*1024*1024)throw new Error('첫 버전은 파일당 80MB까지 지원합니다.');
   const ext=file.name.split('.').pop().toLowerCase();
   if(['hwp','hwpx'].includes(ext)&&settings.hwpPreview!=='text'){
-    const {readHwpPages}=await import('./hwp-renderer.js?v=20261028-6');return readHwpPages(file,onProgress);
+    const {readHwpPages}=await import('./hwp-renderer.js?v=20261029-8');return readHwpPages(file,onProgress);
   }
   if(ext==='hwp')throw new Error('구형 HWP는 이 웹앱에서 직접 해석할 수 없습니다. 한글에서 HWPX 또는 PDF로 저장한 뒤 선택해 주세요.');
   if(ext==='pdf')return readPdf(file,onProgress);
@@ -51,24 +54,37 @@ async function readPdf(file,onProgress){
       const tx=pdfjs.Util.transform([scale,0,0,-scale,0,vp.height*scale],item.transform);
       const size=Math.max(8,Math.abs(item.height*scale)||Math.abs(tx[3]));
       const x=Math.max(0,tx[4]),y=Math.max(0,tx[5]-size),w=Math.max(2,item.width*scale),h=size*1.25;
+      const token={str:item.str,x,y,w,h,font:`${size}px ${info.styles?.[item.fontName]?.fontFamily||'sans-serif'}`};
       const existing=lines.find(l=>Math.abs(l.y-y)<Math.max(5,size*.38) && x>=l.minX-7);
-      if(existing){existing.tokens.push({str:item.str,x,w});existing.minX=Math.min(existing.minX,x);existing.maxX=Math.max(existing.maxX,x+w);existing.h=Math.max(existing.h,h)}
-      else lines.push({y,minX:x,maxX:x+w,h,tokens:[{str:item.str,x,w}]});
+      if(existing){existing.tokens.push(token);existing.minX=Math.min(existing.minX,x);existing.maxX=Math.max(existing.maxX,x+w);existing.h=Math.max(existing.h,h)}
+      else lines.push({y,minX:x,maxX:x+w,h,tokens:[token]});
     }
     lines.sort((a,b)=>a.y-b.y||a.minX-b.minX);
     const output=page(`PDF ${p}페이지`,'pdf');output.height=Math.round(vp.height*scale);
-    for(const line of lines){
-      line.tokens.sort((a,b)=>a.x-b.x);
-      let text='';let right=-Infinity;
-      for(const t of line.tokens){if(text&&t.x-right>3)text+=' ';text+=t.str;right=Math.max(right,t.x+t.w);}
+    let locate=null;
+    if(typeof document!=='undefined'){
+      const canvas=document.createElement('canvas'),context=canvas.getContext('2d',{willReadFrequently:true});
+      canvas.width=PAGE_WIDTH;canvas.height=output.height;
+      await pg.render({canvasContext:context,viewport:pg.getViewport({scale})}).promise;
+      locate=pdfCellLocator(context.getImageData(0,0,canvas.width,canvas.height));canvas.width=canvas.height=1;
+    }
+    const blocks=pdfBlocks(lines,locate),geometry=JSON.stringify(blocks.filter(b=>b.cell).map(b=>b.cell));
+    const shape=globalThis.crypto?.subtle?Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(geometry))),n=>n.toString(16).padStart(2,'0')).join(''):geometry;
+    for(const block of blocks){
+      const tokens=block.tokens.sort((a,b)=>Math.abs(a.y-b.y)>Math.max(4,a.h*.3)?a.y-b.y:a.x-b.x);
+      let text='',right=-Infinity,previousY=null;const textRuns=[];
+      for(const t of tokens){if(text)text+=previousY!=null&&Math.abs(t.y-previousY)>Math.max(4,t.h*.3)?'\n':t.x-right>3?' ':'';textRuns.push(makeTextRun(t.str,{x:t.x,y:t.y,w:t.w,h:t.h},t.font,text.length));text+=t.str;right=t.x+t.w;previousY=t.y;}
       if(!text.trim())continue;
-      const r={id:`pdf-${p}-${doc.records.length}`,role:'paragraph',text:text.trim(),label:`${p}페이지`,page:p-1,rect:{x:line.minX,y:line.y,w:Math.max(8,line.maxX-line.minX),h:line.h},style:null,source:'pdf'};
+      const x=Math.min(...tokens.map(t=>t.x)),y=Math.min(...tokens.map(t=>t.y)),trim=text.length-text.trimStart().length;
+      for(const run of textRuns){run.start-=trim;run.end-=trim;for(const g of run.glyphs){g.start-=trim;g.end-=trim;}}
+      const r={id:`pdf-${p}-${doc.records.length}`,role:block.cell?'cell':'paragraph',text:text.trim(),textRuns,label:`${p}페이지 · ${block.cell?'표 셀 (선 기준)':'문장 구간 (셀 경계 미확인)'}`,page:p-1,rect:block.cell||{x,y,w:Math.max(8,...tokens.map(t=>t.x+t.w-x)),h:Math.max(...tokens.map(t=>t.y+t.h-y))},style:null,source:'pdf',meta:{pdfCell:!!block.cell,...(block.cell?{sourceCellKey:`pdf:${p}:${JSON.stringify(block.cell)}`,tableShape:shape}:{})}};
       doc.records.push(r);textCount++;output.elements.push({kind:'text',text:r.text,...r.rect});
     }
     doc.pages.push(output);onProgress(p/pdf.numPages*.85,`${p}/${pdf.numPages}페이지 텍스트 분석`);
     if(p%5===0)await new Promise(resolve=>setTimeout(resolve,0));
   }
   if(!textCount)doc.warnings.push('이 PDF에서 선택 가능한 텍스트를 찾지 못했습니다. 스캔 문서라면 화면 비교만 가능합니다(OCR 미지원).');
+  else doc.warnings.push('PDF 셀은 표의 선으로 구분하며 선이 불명확하면 문장 단위로 표시합니다. 글자 강조 위치는 PDF 글꼴에 따라 약간 다를 수 있습니다.');
   return doc;
 }
 
@@ -133,6 +149,11 @@ async function readXlsx(file,zip,onProgress){
         const list=rows.get(row)||[];
         for(const r of list){const col=r.meta.col;if(col<startCol||col>endCol)continue;
           r.page=doc.pages.length;r.rect={x:44+(col-startCol)*w,y:110+(row-startRow)*h,w,h};
+          if(typeof document!=='undefined'){
+            const ctx=sheetMeasure||(sheetMeasure=document.createElement('canvas').getContext('2d')),font=`${r.style?.bold?'bold ':''}${Math.min(14,Math.max(10,r.style?.size||12))}px Arial`;ctx.font=font;
+            const visible=ellipsis(ctx,r.text,w-10),part=visible.endsWith('…')?visible.slice(0,-1):visible;
+            r.textRuns=[makeTextRun(part,{x:r.rect.x+5,y:r.rect.y+3,w:ctx.measureText(part).width,h:15},font)];
+          }
           pg.elements.push({kind:'cell',text:r.text,...r.rect,style:r.style,label:r.label});
         }
       }
@@ -200,7 +221,7 @@ async function readHwpx(file,zip,onProgress){
 export async function renderPage(doc,index,canvas,width=800){
   const pg=doc.pages[index];if(!pg)return;
   if(doc.preview==='hwp-layout'){
-    const {renderHwpPage}=await import('./hwp-renderer.js?v=20261028-6');await renderHwpPage(doc,index,canvas,width);
+    const {renderHwpPage}=await import('./hwp-renderer.js?v=20261029-8');await renderHwpPage(doc,index,canvas,width);
   }else if(doc.type==='pdf'){
     const pdfpage=await doc.pdf.getPage(index+1),base=pdfpage.getViewport({scale:1}),scale=width/base.width;
     const vp=pdfpage.getViewport({scale});canvas.width=Math.round(vp.width);canvas.height=Math.round(vp.height);
