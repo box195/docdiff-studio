@@ -1,5 +1,6 @@
 // Pinned MIT-licensed RHWP 0.8.7. Document bytes never leave this browser.
-import {styleReader,textStyleRanges} from './hwp-styles.js?v=20261028-6';
+import {styleReader,textStyleRanges} from './hwp-styles.js?v=20261029-8';
+import {makeTextRun} from './text-locations.js?v=20261029-8';
 let enginePromise;
 async function engine(){
   if(!enginePromise)enginePromise=(async()=>{
@@ -64,7 +65,9 @@ export function layoutRecords(native,pageIndex,info,layout,inspection={reader:st
     if(group.inCell&&!ranges.length&&first)style.emptyTextFormat=inspection.reader.characters(first);
     if(group.inCell){const [sec,parent,control]=group.table.key.split(':').map(Number),index=first?.cellIdx??box?.cellIdx;Object.assign(style,inspection.reader.cell(sec,parent,control,index,first?.cellPath,cellInfo));}
     const meta=group.inCell?{sourceCellKey:group.source,tableShape:group.table.shape,sourceTableKey:group.table.key,tableRow:row,col,colSpan:cellInfo?.colSpan||1,rowSpan:cellInfo?.rowSpan||1,rowKey:''}:{};
-    output.push({id:`hwp-${pageIndex}-${output.length}`,role:group.inCell?'cell':'paragraph',text,page:pageIndex,rect,style,source:'hwp-layout',meta,label:group.inCell?`표 · ${row}행 ${col}열`:`${pageIndex+1}페이지 본문`});
+    const textRuns=[];let cursor=0;
+    for(const run of runs){const part=normalized(run.text).trim();if(!part)continue;const at=text.indexOf(part,cursor);if(at<0)continue;const box={x:run.x*scale,y:run.y*scale,w:Math.max(2,run.w*scale),h:Math.max(2,run.h*scale)};textRuns.push(makeTextRun(part,box,`${primary?.size||12}px "${primary?.font||'Malgun Gothic'}"`,at));cursor=at+part.length;}
+    output.push({id:`hwp-${pageIndex}-${output.length}`,role:group.inCell?'cell':'paragraph',text,textRuns,page:pageIndex,rect,style,source:'hwp-layout',meta,label:group.inCell?`표 · ${row}행 ${col}열`:`${pageIndex+1}페이지 본문`});
   }
   const rowKeys=new Map();for(const r of output.filter(r=>r.role==='cell').sort((a,b)=>a.meta.col-b.meta.col)){const key=`${r.meta.sourceTableKey}:${r.meta.tableRow}`;if(!rowKeys.has(key))rowKeys.set(key,r.text);}
   for(const r of output)if(r.role==='cell')r.meta.rowKey=rowKeys.get(`${r.meta.sourceTableKey}:${r.meta.tableRow}`)||'';

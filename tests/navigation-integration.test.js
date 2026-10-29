@@ -22,7 +22,7 @@ test('실제 앱 다음/방향키 이동: 미리보기 포커스, 외부 스크�
   try{
     let source=await readFile(new URL('../dist/app.js',import.meta.url),'utf8');
     source=source.replace(/import \{readDocument,renderPage,demoDocuments\} from '.\/readers.js(?:\?[^']*)?';/,"const readDocument=()=>{},demoDocuments=()=>{},renderPage=async()=>{throw Error('같은 페이지를 불필요하게 다시 그림')};");
-    source=source.replace(/'\.\/(diff|review-navigation|change-presentation)\.js(?:\?[^']*)?'/g,(_,name)=>JSON.stringify(new URL(`../dist/${name}.js`,import.meta.url).href));
+    source=source.replace(/'\.\/(diff|review-navigation|change-presentation|text-locations)\.js(?:\?[^']*)?'/g,(_,name)=>JSON.stringify(new URL(`../dist/${name}.js`,import.meta.url).href));
     const app=await import(`data:text/javascript;base64,${Buffer.from(source+'\nexport {state,selectDiff,step};').toString('base64')}`);
     const record=n=>({role:'cell',text:String(n),page:0,rect:{x:50,y:100+n*40,w:100,h:20},meta:{sheet:'S',row:n,col:1}});
     app.state.docs=[0,1].map(()=>({pages:[{width:800,height:1120}],records:[]}));

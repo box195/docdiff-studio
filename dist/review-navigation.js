@@ -1,5 +1,5 @@
 // Group only adjacent, confidently matched spreadsheet cells; retain every member.
-import {groupHwpFormats} from './hwp-grouping.js?v=20261028-6';
+import {groupHwpFormats} from './hwp-grouping.js?v=20261029-8';
 const cell = r => r?.role === 'cell' && r.meta?.sheet && Number.isInteger(r.meta.row) && Number.isInteger(r.meta.col);
 function groupKey(d) {
   if (d.confidence !== 'certain' || !['content','format'].includes(d.category) || d.type === 'review') return null;

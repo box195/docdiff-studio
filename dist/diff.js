@@ -132,7 +132,7 @@ export function contentDifferences(a,b,options){
 
 function newCanvas(){return document.createElement('canvas');}
 async function pixels(doc,index){
-  const {renderPage}=await import('./readers.js?v=20261028-6');
+  const {renderPage}=await import('./readers.js?v=20261029-8');
   const source=newCanvas();await renderPage(doc,index,source,550);
   const canvas=newCanvas();canvas.width=420;canvas.height=570;
   const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.fillStyle='white';ctx.fillRect(0,0,420,570);
@@ -193,7 +193,7 @@ export async function visualDifferences(a,b,options,onProgress=()=>{}){
       const right={page:i,rect:sourceRect(b.pages[i],pb.frame),text:`${i+1}페이지 화면 영역`};
       const intersectsA=!options.regionA||options.regionA.page===i&&overlap(left.rect,options.regionA.rect);
       const intersectsB=!options.regionB||options.regionB.page===i&&overlap(right.rect,options.regionB.rect);
-      if(intersectsA&&intersectsB)out.push({...mk(a.type===b.type?'changed':'review','visual',left,right,`렌더링 영역 ${region.tiles}칸에서 차이가 발견됐습니다. ${a.type!==b.type?'서로 다른 형식의 배치 차이일 수 있습니다.':''}`,a.type===b.type?'probable':'uncertain'),id:`visual-${out.length}`});
+      if(intersectsA&&intersectsB)out.push({...mk('review','visual',left,right,`화면 차이가 발견됐습니다. 내용 수정·그림·배치 중 원인은 확정하지 못했습니다. ${a.type!==b.type?'서로 다른 형식의 렌더링 차이일 수 있습니다.':''}`,'uncertain'),id:`visual-${out.length}`});
     }
     onProgress((i+1)/Math.max(1,n),`${i+1}/${n}페이지 화면 비교`);
     await new Promise(resolve=>setTimeout(resolve,0));

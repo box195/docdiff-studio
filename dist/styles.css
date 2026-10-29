@@ -13,3 +13,14 @@
 @media(max-width:760px){.change-legend .check{margin-left:0;width:100%}.active-change-title{align-items:flex-start;flex-direction:column;gap:4px}.active-change-title span{white-space:normal}.before-after{gap:5px}.page-viewport{height:340px}.pane-role{font-size:11px}.annotation-tag{font-size:9px}.active-change .before-after strong{font-size:10px}}
 
 .legend-review{color:#5f6a7b}.legend-review:before{background:transparent!important;border:1px dashed currentColor}
+
+/* Cell context remains pale; only the changed glyphs receive strong emphasis. */
+.annotation.annotation-context{border-width:1px;background:rgba(var(--mark-rgb),.025);border-radius:5px}
+.annotation.annotation-context.active{border:1.5px solid rgba(var(--mark-rgb),.65);background:rgba(var(--mark-rgb),.045);box-shadow:0 0 0 2px #ffffffa0}
+.annotation.annotation-context.format-context.active{background:rgba(var(--mark-rgb),.16);border-width:2px}
+.text-change-mark{position:absolute;pointer-events:none;background:rgba(var(--mark-rgb),.13);border-bottom:2px solid rgba(var(--mark-rgb),.6);border-radius:2px;opacity:.55}
+.text-change-mark.active{background:rgba(var(--mark-rgb),.27);border-bottom:2px solid rgb(var(--mark-rgb));opacity:1;box-shadow:0 0 0 1px rgba(var(--mark-rgb),.35)}
+.before-after mark{display:inline;background:#cbdff9;color:inherit;border-radius:2px;padding:0 1px}.before-after>div+div mark{background:#ffdbab}
+.highlight-hint,.overlay-guide{font-size:10px;color:#708693;line-height:1.5;margin:5px 0 0}.overlay-guide{margin:-3px 0 9px}
+.selection{border-color:#08858d;background:#20b7bd10}.selection:before{content:'비교 범위 (검출 결과 아님)';position:absolute;left:0;top:0;background:#087f89;color:#fff;padding:2px 5px;font-size:10px;white-space:nowrap}
+.annotation-tag{left:-1px;font-size:9px;padding:2px 5px}
